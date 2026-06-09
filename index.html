@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#0a0a0f" />
+    <title>PNJ · Virtual Try-On Demo</title>
+    <link rel="stylesheet" href="/src/ui/style.css" />
+  </head>
+  <body>
+    <div id="stage">
+      <!-- Live camera feed (CSS-mirrored for a natural selfie view) -->
+      <video id="camera" playsinline autoplay muted></video>
+      <!-- Three.js renders the jewelry overlay here -->
+      <canvas id="overlay"></canvas>
+
+      <!-- Hint shown until a hand / face is detected -->
+      <div id="hint" class="hint">
+        <span class="hint__icon">✋</span>
+        <span class="hint__text">Show your hand to the camera</span>
+      </div>
+
+      <!-- Branding -->
+      <div class="brand">
+        <span class="brand__mark">PNJ</span>
+        <span class="brand__sub">Virtual Try-On</span>
+      </div>
+
+      <!-- Controls -->
+      <div class="controls">
+        <div class="seg" id="mode-seg">
+          <button class="seg__btn is-active" data-mode="ring">💍 Ring</button>
+          <button class="seg__btn" data-mode="earring">👂 Earrings</button>
+          <button class="seg__btn" data-mode="necklace">📿 Necklace</button>
+        </div>
+        <div class="seg" id="quality-seg">
+          <button class="seg__btn" data-quality="fast">Fast (Web AR)</button>
+          <button class="seg__btn is-active" data-quality="premium">Premium (PBR)</button>
+        </div>
+      </div>
+
+      <!-- Catalog strip -->
+      <div class="catalog" id="catalog"></div>
+
+      <!-- Boot / loading screen -->
+      <div id="boot" class="boot">
+        <div class="boot__spinner"></div>
+        <div class="boot__text">Starting camera & AI tracking…</div>
+        <div class="boot__hint" id="boot-hint"></div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
