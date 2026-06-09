@@ -4,11 +4,18 @@ import { MEDIAPIPE } from '../config.js';
 // Thin wrapper around MediaPipe HandLandmarker (running-mode VIDEO).
 export async function createHandTracker() {
   const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE.wasm);
+  // GPU is fastest, but it's unavailable on some phones/browsers — fall back to CPU.
   const landmarker = await HandLandmarker.createFromOptions(vision, {
     baseOptions: { modelAssetPath: MEDIAPIPE.handModel, delegate: 'GPU' },
     runningMode: 'VIDEO',
     numHands: 1
-  });
+  }).catch(() =>
+    HandLandmarker.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: MEDIAPIPE.handModel, delegate: 'CPU' },
+      runningMode: 'VIDEO',
+      numHands: 1
+    })
+  );
 
   // Returns the first hand's 21 landmarks, or null.
   function detect(video, tsMs) {

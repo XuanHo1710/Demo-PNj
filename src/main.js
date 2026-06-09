@@ -97,10 +97,18 @@ ui.renderCatalog(CATALOG.ring, state.design.ring.id);
 
 // --- Camera ---
 async function startCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: false,
-    video: { facingMode: CAMERA.facingMode, width: { ideal: CAMERA.width }, height: { ideal: CAMERA.height } }
-  });
+  const open = (video) => navigator.mediaDevices.getUserMedia({ audio: false, video });
+  let stream;
+  try {
+    stream = await open({
+      facingMode: CAMERA.facingMode,
+      width: { ideal: CAMERA.width },
+      height: { ideal: CAMERA.height }
+    });
+  } catch {
+    // Some phones reject resolution hints (OverconstrainedError) — retry with just the front camera.
+    stream = await open({ facingMode: CAMERA.facingMode });
+  }
   video.srcObject = stream;
   await video.play();
   await new Promise((res) => {
@@ -150,12 +158,28 @@ function frame() {
     const lm = face.detect(video, ts);
     if (lm) {
       // Shoulders (best-effort) anchor the chain to the body so it stays around the neck.
+      // With several people in frame we pick the pose whose shoulders sit under THIS face, so a
+      // bystander's body can't drag the necklace away.
       let shoulders = null;
       if (pose) {
-        const pl = pose.detect(video, ts);
-        if (pl) {
-          const L = pl[POSE.L_SHOULDER];
-          const R = pl[POSE.R_SHOULDER];
+        const poses = pose.detect(video, ts);
+        if (poses && poses.length) {
+          const noseN = lm[4]; // face nose in the same normalized image space as the pose
+          let best = poses[0];
+          if (poses.length > 1) {
+            let bestD = Infinity;
+            for (const pl of poses) {
+              const mx = (pl[POSE.L_SHOULDER].x + pl[POSE.R_SHOULDER].x) / 2;
+              const my = (pl[POSE.L_SHOULDER].y + pl[POSE.R_SHOULDER].y) / 2;
+              const d = Math.hypot(mx - noseN.x, my - noseN.y);
+              if (d < bestD) {
+                bestD = d;
+                best = pl;
+              }
+            }
+          }
+          const L = best[POSE.L_SHOULDER];
+          const R = best[POSE.R_SHOULDER];
           shoulders = {
             left: mapper(L),
             right: mapper(R),
