@@ -44,19 +44,32 @@ export function earsFromFace(landmarks, map) {
   const distL = dist(b, nose); // screen-left ear to nose
   const distR = dist(a, nose); // screen-right ear to nose
 
-  // If the head is turned, the ear turned towards the camera is further from the nose in 2D projection,
-  // while the ear turned away is closer. The turned-away ear needs a smaller outward offset.
-  const outL = faceWidth * FACE.EARLOBE_OUT * Math.min(1.2, Math.max(0.15, distL / distR));
-  const outR = faceWidth * FACE.EARLOBE_OUT * Math.min(1.2, Math.max(0.15, distR / distL));
+  // Occlusion: if the head is turned too far, hide the earring on the turned-away side
+  const leftVisible = distL / (distR || 1) > 0.45;
+  const rightVisible = distR / (distL || 1) > 0.45;
+
+  // Symmetrical head-turn factor: 0 when facing forward, increases as head turns.
+  // We reduce the outward push as the head turns because the earlobes project less from the silhouette.
+  const turn = Math.abs(distL - distR) / (distL + distR || 1);
+  const factor = Math.max(0.1, 1.0 - turn * 2.0);
+  const out = faceWidth * FACE.EARLOBE_OUT * factor;
   const drop = faceHeight * FACE.EARLOBE_DROP;
+
+  // Lateral correction shift: when the head turns, the cheek outline landmarks (a and b)
+  // shift sideways relative to the physical ears. We calculate a correction offset
+  // to shift both earrings back, clamped to prevent over-correcting at extreme angles.
+  const bias = (distL - distR) / (distL + distR || 1);
+  const correction = faceWidth * Math.min(0.06, Math.max(-0.06, bias * 0.25));
 
   const inner = a.x < b.x ? a : b; // image-left ear (smaller x, b)
   const outer = a.x < b.x ? b : a; // image-right ear (larger x, a)
 
   return {
     size: faceWidth * FACE.EARRING_SIZE,
-    left: { x: inner.x - outL, y: inner.y + drop },
-    right: { x: outer.x + outR, y: outer.y + drop }
+    left: { x: inner.x - out - correction, y: inner.y + drop },
+    right: { x: outer.x + out - correction, y: outer.y + drop },
+    leftVisible,
+    rightVisible
   };
 }
 
@@ -75,7 +88,7 @@ export function pendantFromFace(landmarks, map) {
   // the chain rises around the neck instead of lying flat.
   const side = (ear) => ({
     x: lerp(ear.x, chin.x, PENDANT.NECK_INSET), // horizontal: width of the drape
-    y: chin.y + faceHeight * PENDANT.NECK_DROP // vertical: sit just below the chin
+    y: ear.y + faceHeight * PENDANT.NECK_DROP // vertical: relative to ear Y for stability when looking down
   });
   return { center, size: faceWidth * PENDANT.SIZE, neckRight: side(earR), neckLeft: side(earL) };
 }

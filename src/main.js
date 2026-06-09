@@ -140,8 +140,9 @@ function frame() {
       earringL.update(stage.toWorld(e.left, v[0]), e.size);
       earringR.update(stage.toWorld(e.right, v[1]), e.size);
       hideAll();
-      earringL.group.visible = earringR.group.visible = true;
-      detected = true;
+      earringL.group.visible = e.leftVisible;
+      earringR.group.visible = e.rightVisible;
+      detected = e.leftVisible || e.rightVisible;
     }
   } else if (ready && state.mode === 'necklace' && face) {
     const lm = face.detect(video, ts);

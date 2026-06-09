@@ -36,7 +36,7 @@ export const FACE = {
   // ear point straight out (fraction of face width) and down (fraction of face height) to the
   // lobe. Additive per-ear offsets don't amplify head turns, so the two sides stay symmetric.
   EARLOBE_OUT: 0.02, // outward push to the lobe, as a fraction of face width
-  EARLOBE_DROP: 0.07, // downward drop to the lobe, as a fraction of face height
+  EARLOBE_DROP: 0.085, // downward drop to the lobe, as a fraction of face height
   EARRING_SIZE: 0.12, // stud width as a fraction of face width
   // Crop the PNJ stud-pair photo down to the single front-facing piece (normalized, top-left).
   EARRING_CROP: { x: 0.02, y: 0.22, w: 0.46, h: 0.56 }
@@ -47,6 +47,6 @@ export const PENDANT = {
   DROP: 0.46, // pendant centre below the chin (sits on the upper chest), in face-heights
   SIZE: 0.5, // pendant width as a fraction of face width
   // Chain ends sit just below the chin, at the sides of the neck.
-  NECK_INSET: 0.25, // chain-end X: blend from the ears toward the chin (0 = at ears, wide)
-  NECK_DROP: 0.14 // chain-end Y: how far below the chin, in face-heights
+  NECK_INSET: 0.18, // chain-end X: blend from the ears toward the chin (0 = at ears, wide)
+  NECK_DROP: 0.45 // chain-end Y: how far below the ears, in face-heights (sits around jaw/neck level)
 };
