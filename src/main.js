@@ -76,12 +76,18 @@ function getTexture(url) {
   return texCache.get(url);
 }
 function applyTexture(mode) {
-  const img = state.design[mode].image;
+  const item = state.design[mode];
+  const img = item.image;
   if (mode === 'ring') ring.setTexture(getTexture(img));
   else if (mode === 'earring') {
     earringL.setTexture(getTexture(img));
     earringR.setTexture(getTexture(img));
-  } else pendant.setTexture(getTexture(img));
+  } else {
+    pendant.setTexture(getTexture(img));
+    // Determine metal type: check if name contains "Vàng trắng" or if SKU contains white gold indicators
+    const isWhiteGold = /trắng/i.test(item.name) || /W\d{2,}/i.test(item.sku);
+    pendant.setMetalColor(isWhiteGold ? 'white' : 'yellow');
+  }
 }
 
 ['ring', 'earring', 'necklace'].forEach(applyTexture);

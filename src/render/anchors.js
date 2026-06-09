@@ -27,22 +27,36 @@ export function ringFromHand(landmarks, map) {
 }
 
 // Screen-space earlobe placement (both ears) from face-mesh landmarks. Each cheek-silhouette
-// point is pushed straight out (toward its own side) and down to reach the lobe. Per-ear
-// additive offsets keep the two sides symmetric even when the head turns.
+// point is pushed out (toward its own side) and down to reach the lobe. We scale the outward
+// push dynamically based on the head's rotation (using the nose-to-ear distance ratio) so
+// that the earring on the turned-away side doesn't float in the air.
 export function earsFromFace(landmarks, map) {
-  const a = map(landmarks[FACE.EAR_RIGHT]);
-  const b = map(landmarks[FACE.EAR_LEFT]);
+  const a = map(landmarks[FACE.EAR_RIGHT]); // user's right ear (screen-right, larger x)
+  const b = map(landmarks[FACE.EAR_LEFT]);  // user's left ear (screen-left, smaller x)
   const top = map(landmarks[FACE.FOREHEAD]);
   const chin = map(landmarks[FACE.CHIN]);
+  const nose = map(landmarks[4]); // nose tip landmark
+
   const faceWidth = dist(a, b);
-  const out = faceWidth * FACE.EARLOBE_OUT;
-  const drop = dist(top, chin) * FACE.EARLOBE_DROP;
-  const inner = a.x < b.x ? a : b; // image-left ear (smaller x)
-  const outer = a.x < b.x ? b : a; // image-right ear
+  const faceHeight = dist(top, chin);
+
+  // Measure screen-space distances from ears to nose to detect head rotation
+  const distL = dist(b, nose); // screen-left ear to nose
+  const distR = dist(a, nose); // screen-right ear to nose
+
+  // If the head is turned, the ear turned towards the camera is further from the nose in 2D projection,
+  // while the ear turned away is closer. The turned-away ear needs a smaller outward offset.
+  const outL = faceWidth * FACE.EARLOBE_OUT * Math.min(1.2, Math.max(0.15, distL / distR));
+  const outR = faceWidth * FACE.EARLOBE_OUT * Math.min(1.2, Math.max(0.15, distR / distL));
+  const drop = faceHeight * FACE.EARLOBE_DROP;
+
+  const inner = a.x < b.x ? a : b; // image-left ear (smaller x, b)
+  const outer = a.x < b.x ? b : a; // image-right ear (larger x, a)
+
   return {
     size: faceWidth * FACE.EARRING_SIZE,
-    left: { x: inner.x - out, y: inner.y + drop },
-    right: { x: outer.x + out, y: outer.y + drop }
+    left: { x: inner.x - outL, y: inner.y + drop },
+    right: { x: outer.x + outR, y: outer.y + drop }
   };
 }
 

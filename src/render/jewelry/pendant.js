@@ -8,14 +8,15 @@ const UP = new THREE.Vector3(0, 1, 0);
 
 export function createPendant() {
   const group = new THREE.Group();
-  const piece = createProductPlane();
+  // Crop the top 20% to remove printed placeholder chains
+  const piece = createProductPlane({ x: 0, y: 0.2, w: 1, h: 0.8 });
   group.add(piece.group);
 
   const chainMat = new THREE.MeshStandardMaterial({
-    color: 0xf4d493,
+    color: 0xe5e7eb, // Default to a gorgeous white gold/silver
     metalness: 1.0,
-    roughness: 0.28,
-    envMapIntensity: 1.5
+    roughness: 0.15, // Highly polished
+    envMapIntensity: 2.5 // Highly reflective
   });
   const chain = new THREE.Mesh(new THREE.BufferGeometry(), chainMat);
   chain.position.z = -2; // sit just behind the pendant
@@ -23,9 +24,12 @@ export function createPendant() {
 
   // center/neck*: world Vector3 (px). size: pendant width in px.
   function update(center, size, neckLeft, neckRight) {
-    piece.place(center, size, 0);
+    // Shift the plane center down by 0.1 * size to account for the top crop
+    const shiftedCenter = center.clone().addScaledVector(UP, -size * 0.1);
+    piece.place(shiftedCenter, size, 0);
 
-    const bail = center.clone().addScaledVector(UP, size * 0.34); // top of the pendant
+    // The loop of the pendant is at center + 0.16 * size
+    const bail = center.clone().addScaledVector(UP, size * 0.16);
     // Centripetal Catmull-Rom passes through all three points without overshoot, giving a
     // natural draped curve: up at the neck sides, dipping through the bail.
     const curve = new THREE.CatmullRomCurve3(
@@ -33,10 +37,19 @@ export function createPendant() {
       false,
       'centripetal'
     );
-    const r = Math.max(1, size * 0.009);
+    const r = Math.max(1.2, size * 0.01); // Slightly thicker for better specular highlights
     chain.geometry.dispose();
-    chain.geometry = new THREE.TubeGeometry(curve, 56, r, 8, false);
+    chain.geometry = new THREE.TubeGeometry(curve, 64, r, 8, false);
   }
 
-  return { group, setTexture: piece.setTexture, setQuality: piece.setQuality, update };
+  function setMetalColor(colorName) {
+    if (colorName === 'white') {
+      chainMat.color.setHex(0xe5e7eb);
+    } else {
+      chainMat.color.setHex(0xf4d493);
+    }
+    chainMat.needsUpdate = true;
+  }
+
+  return { group, setTexture: piece.setTexture, setQuality: piece.setQuality, update, setMetalColor };
 }

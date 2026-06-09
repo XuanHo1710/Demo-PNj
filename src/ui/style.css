@@ -28,6 +28,8 @@ body {
   object-fit: contain; /* show the full camera frame (no zoom crop); letterboxed if needed */
   transform: scaleX(-1); /* natural selfie mirror */
   background: #000;
+  /* Premium beauty filter: soft glow + skin brightening/whitening + gentle saturation */
+  filter: url(#beauty-glow) brightness(1.08) contrast(0.96) saturate(1.05);
 }
 #overlay { pointer-events: none; }
 
