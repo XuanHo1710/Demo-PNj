@@ -84,6 +84,8 @@ export function pendantFromFace(landmarks, map, shoulders) {
   const top = map(landmarks[FACE.FOREHEAD]);
   const earR = map(landmarks[FACE.EAR_RIGHT]); // person's right ear (screen-right, larger x)
   const earL = map(landmarks[FACE.EAR_LEFT]); //  person's left ear (screen-left, smaller x)
+  const jawR = map(landmarks[FACE.JAW_RIGHT]); // person's right jaw angle
+  const jawL = map(landmarks[FACE.JAW_LEFT]); //  person's left jaw angle
   const nose = map(landmarks[4]);
   const faceWidth = dist(earL, earR);
   const faceHeight = dist(top, chin);
@@ -102,6 +104,24 @@ export function pendantFromFace(landmarks, map, shoulders) {
     PENDANT.YAW_MAX * DEG
   );
 
+  // Are the shoulders a trustworthy, in-frame match for THIS face?
+  const haveShoulders =
+    shoulders &&
+    shoulders.visL > POSE.MIN_VIS &&
+    shoulders.visR > POSE.MIN_VIS &&
+    (shoulders.left.y + shoulders.right.y) / 2 > chin.y;
+
+  // Per-person neck width, measured LIVE from the jaw angle every frame so the curve fits each
+  // person. The jaw span foreshortens as the head turns, so divide by cos(yaw) to recover the
+  // true frontal width (the renderer re-applies the turn). Clamp against landmark glitches.
+  const yawCos = Math.max(0.5, Math.cos(yaw));
+  const jawHalf = dist(jawL, jawR) / yawCos / 2;
+  const radius = clamp(
+    jawHalf * PENDANT.NECK_WIDTH, // grow the measured jaw half-width out to the neck/skin radius
+    faceWidth * PENDANT.RADIUS_MIN,
+    faceWidth * PENDANT.RADIUS_MAX
+  );
+
   // Horizontal neck centre = the head's vertical centreline (jaw-corner midpoint). It's
   // symmetric by construction, so the necklace stays centred on the neck instead of drifting
   // to one side. A small follow toward the nose eases it with strong head turns. Shoulders only
@@ -109,19 +129,23 @@ export function pendantFromFace(landmarks, map, shoulders) {
   // so they can never yank the necklace off-centre.
   const centreX = (earL.x + earR.x) / 2;
   let cx = lerp(centreX, nose.x, PENDANT.FOLLOW);
-  if (shoulders && shoulders.visL > POSE.MIN_VIS && shoulders.visR > POSE.MIN_VIS) {
+  // Vertical placement adapts to each person's neck length: when the shoulders are visible we
+  // sit the chain partway down from the chin to the shoulder line; otherwise fall back to a
+  // face-height ratio.
+  let cy = chin.y + faceHeight * PENDANT.NECK_DROP;
+  if (haveShoulders) {
     const midX = (shoulders.left.x + shoulders.right.x) / 2;
     const midY = (shoulders.left.y + shoulders.right.y) / 2;
-    if (midY > chin.y && Math.abs(midX - centreX) < faceWidth * 0.5) {
+    if (Math.abs(midX - centreX) < faceWidth * 0.5) {
       cx = lerp(cx, midX, PENDANT.SHOULDER_WEIGHT);
     }
+    cy = lerp(chin.y, midY, PENDANT.DROP_TO_SHOULDER);
   }
-  const cy = chin.y + faceHeight * PENDANT.NECK_DROP;
 
   return {
     center: { x: cx, y: cy }, // neck-cylinder centre (front low point of the drape)
     size: faceWidth * PENDANT.SIZE, // pendant photo width (px)
-    radius: faceWidth * PENDANT.NECK_RADIUS, // neck-cylinder radius (px)
+    radius, // neck-cylinder radius (px), measured live per person
     yaw, // wrap rotation around the neck (rad)
     roll, // head tilt (rad, y-up)
     faceH: faceHeight // for the drape sag + occluder height (px)

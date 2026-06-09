@@ -40,6 +40,8 @@ export const HAND = {
 export const FACE = {
   EAR_RIGHT: 234, // person's right ear region (image-left)
   EAR_LEFT: 454, //  person's left ear region (image-right)
+  JAW_RIGHT: 172, // person's right jaw angle (gonion) — lowest reliable width point
+  JAW_LEFT: 397, //  person's left jaw angle (gonion)
   CHIN: 152,
   FOREHEAD: 10,
   // The 234/454 landmarks sit on the cheek silhouette, inboard of the real ear. Push each
@@ -58,9 +60,15 @@ export const FACE = {
 // Sizes are relative to the face so they scale with distance. Tweak while framing the shot.
 export const PENDANT = {
   SIZE: 0.46, // pendant photo width as a fraction of face width
-  NECK_DROP: 0.3, // neck-cylinder centre below the chin, in face-heights (sits low on the neck)
-  NECK_RADIUS: 0.42, // neck-cylinder radius as a fraction of face width (snug = smaller)
-  CHAIN_GAP: 1.06, // chain radius = NECK_RADIUS * CHAIN_GAP (rides just outside the neck)
+  NECK_DROP: 0.3, // fallback neck-centre below the chin, in face-heights (no shoulders)
+  DROP_TO_SHOULDER: 0.4, // with shoulders: neck-centre placed this far from chin toward shoulders
+  // Real per-person neck width is measured LIVE from the jaw angle each frame (yaw-corrected),
+  // so the curve fits each person instead of a fixed ratio. NECK_WIDTH scales that measurement;
+  // RADIUS_MIN/MAX clamp it (as fractions of face width) against landmark glitches.
+  NECK_WIDTH: 1.05, // neck radius = measured (yaw-corrected) half jaw-width × this
+  RADIUS_MIN: 0.32, // lower clamp on neck radius, as a fraction of face width
+  RADIUS_MAX: 0.54, // upper clamp on neck radius, as a fraction of face width
+  CHAIN_GAP: 1.06, // chain radius = neck radius * CHAIN_GAP (rides just outside the neck)
   CHAIN_THICK: 0.016, // chain tube radius as a fraction of neck radius — keep SMALL (thin chain)
   TILT_DEG: 24, // forward tilt of the necklace plane (front sits lower than the nape)
   FRONT_SAG: 0.05, // extra dip at the front centre from the pendant's weight, in face-heights
@@ -70,6 +78,6 @@ export const PENDANT = {
   FOLLOW: 0.15, // horizontal follow of the head turn (keep small so it stays centred)
   SHOULDER_WEIGHT: 0.25, // gentle blend toward the shoulder midpoint (0..1) — must stay small
   PHOTO_DROP: 0.34, // how far the pendant photo hangs below the chain front, in photo-widths
-  FILTER_MIN_CUTOFF: 1.2, // One Euro: lower = smoother at rest (more lag)
-  FILTER_BETA: 0.03 // One Euro: higher = less lag on fast moves
+  FILTER_MIN_CUTOFF: 1.7, // One Euro: lower = smoother at rest (more lag)
+  FILTER_BETA: 0.05 // One Euro: higher = less lag on fast moves (tighter real-time follow)
 };
