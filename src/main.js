@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CAMERA, POSE } from './config.js';
+import { CAMERA, POSE, YOLO } from './config.js';
 import { createStage } from './render/scene.js';
 import { createRing } from './render/jewelry/ring.js';
 import { createEarring } from './render/jewelry/earring.js';
@@ -8,6 +8,7 @@ import { makeMapper, ringFromHand, earsFromFace, pendantFromFace } from './rende
 import { createHandTracker } from './tracking/handTracker.js';
 import { createFaceTracker } from './tracking/faceTracker.js';
 import { createPoseTracker } from './tracking/poseTracker.js';
+import { createYoloPose } from './tracking/yoloPose.js';
 import { setupUI } from './ui/overlay.js';
 import ringData from './catalog/ring.json';
 import earringData from './catalog/earring.json';
@@ -128,6 +129,7 @@ const v = Array.from({ length: 4 }, () => new THREE.Vector3());
 let hand = null;
 let face = null;
 let pose = null;
+let yolo = null;
 
 function frame() {
   const ts = performance.now();
@@ -157,14 +159,21 @@ function frame() {
   } else if (ready && state.mode === 'necklace' && face) {
     const lm = face.detect(video, ts);
     if (lm) {
-      // Shoulders (best-effort) anchor the chain to the body so it stays around the neck.
-      // With several people in frame we pick the pose whose shoulders sit under THIS face, so a
-      // bystander's body can't drag the necklace away.
+      const noseN = lm[4]; // face nose in normalized image space (matches pose/YOLO coords)
+      // Shoulders anchor the chain to the body so it stays around the neck. Prefer YOLOv8-pose
+      // (robust, less jitter); fall back to MediaPipe Pose; both pick the body under THIS face.
       let shoulders = null;
-      if (pose) {
+      const y = yolo && yolo.detect(video, ts);
+      if (y) {
+        shoulders = {
+          left: mapper(y.left),
+          right: mapper(y.right),
+          visL: y.visL,
+          visR: y.visR
+        };
+      } else if (pose) {
         const poses = pose.detect(video, ts);
         if (poses && poses.length) {
-          const noseN = lm[4]; // face nose in the same normalized image space as the pose
           let best = poses[0];
           if (poses.length > 1) {
             let bestD = Infinity;
@@ -189,7 +198,7 @@ function frame() {
         }
       }
       const p = pendantFromFace(lm, mapper, shoulders);
-      pendant.update(stage.toWorld(p.center, v[0]), p.size, p.radius, p.yaw, p.roll, p.faceH);
+      pendant.update(stage.toWorld(p.center, v[0]), p.size, p.radius, p.yaw, p.roll, p.pitch, p.faceH);
       hideAll();
       pendant.group.visible = true;
       detected = true;
@@ -215,6 +224,14 @@ async function boot() {
       pose = await createPoseTracker();
     } catch (err) {
       console.warn('Pose model unavailable; necklace will use face landmarks only.', err);
+    }
+    // YOLOv8-pose is also best-effort and fully optional (needs public/models + onnxruntime-web).
+    if (YOLO.enabled) {
+      try {
+        yolo = await createYoloPose();
+      } catch (err) {
+        console.warn('YOLO pose unavailable; necklace will use MediaPipe Pose instead.', err);
+      }
     }
     ui.bootDone();
     requestAnimationFrame(frame);

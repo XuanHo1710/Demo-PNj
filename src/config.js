@@ -19,6 +19,26 @@ export const POSE = {
   MIN_VIS: 0.5 // ignore shoulders below this visibility (e.g. cropped out of frame)
 };
 
+// YOLOv8-pose (ONNX, runs in-browser via onnxruntime-web). Optional, fail-safe: it gives a
+// second, robust read of the shoulders that we FUSE with MediaPipe to cut jitter and improve
+// accuracy. If the model or runtime is missing it's silently skipped and the necklace falls
+// back to MediaPipe Pose. Throttled (intervalMs) so it never tanks mobile FPS.
+export const YOLO = {
+  enabled: true,
+  // Place a YOLOv8(n)-pose ONNX export here (input 640×640). Drop the file at
+  // `public/models/yolov8n-pose.onnx`; export with: `yolo export model=yolov8n-pose.pt format=onnx imgsz=640`.
+  modelPath: '/models/yolov8n-pose.onnx',
+  // onnxruntime-web wasm binaries (version MUST match onnxruntime-web in package.json).
+  wasmPaths: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0/dist/',
+  inputSize: 640, // model input is square inputSize×inputSize (letterboxed)
+  scoreThreshold: 0.45, // min person confidence to accept a detection
+  minKpScore: 0.5, // min per-keypoint confidence to trust a shoulder
+  intervalMs: 120, // min gap between inferences (≈8 Hz) — protects FPS; smoothing covers the rest
+  // COCO-17 keypoint indices (YOLO pose order).
+  L_SHOULDER: 5, // person's left shoulder
+  R_SHOULDER: 6 //  person's right shoulder
+};
+
 export const CAMERA = {
   // Request the webcam's native landscape frame; the video is shown `contain` (full FOV,
   // letterboxed) so the subject isn't cropped/zoomed in.
@@ -59,25 +79,50 @@ export const FACE = {
 // reads as a complete necklace worn around the neck and stays wrapped when the head turns.
 // Sizes are relative to the face so they scale with distance. Tweak while framing the shot.
 export const PENDANT = {
-  SIZE: 0.46, // pendant photo width as a fraction of face width
+  SIZE: 0.44, // pendant photo width as a fraction of face width
   NECK_DROP: 0.3, // fallback neck-centre below the chin, in face-heights (no shoulders)
   DROP_TO_SHOULDER: 0.4, // with shoulders: neck-centre placed this far from chin toward shoulders
   // Real per-person neck width is measured LIVE from the jaw angle each frame (yaw-corrected),
   // so the curve fits each person instead of a fixed ratio. NECK_WIDTH scales that measurement;
   // RADIUS_MIN/MAX clamp it (as fractions of face width) against landmark glitches.
-  NECK_WIDTH: 1.05, // neck radius = measured (yaw-corrected) half jaw-width × this
-  RADIUS_MIN: 0.32, // lower clamp on neck radius, as a fraction of face width
-  RADIUS_MAX: 0.54, // upper clamp on neck radius, as a fraction of face width
-  CHAIN_GAP: 1.06, // chain radius = neck radius * CHAIN_GAP (rides just outside the neck)
-  CHAIN_THICK: 0.016, // chain tube radius as a fraction of neck radius — keep SMALL (thin chain)
-  TILT_DEG: 24, // forward tilt of the necklace plane (front sits lower than the nape)
-  FRONT_SAG: 0.05, // extra dip at the front centre from the pendant's weight, in face-heights
+  NECK_WIDTH: 0.96, // neck radius = measured (yaw-corrected) half jaw-width × this (smaller = snugger)
+  RADIUS_EAR: 0.44, // stable neck-radius estimate from the ear span (fraction of face width)
+  RADIUS_STABLE: 0.55, // blend live-jaw → stable-ear (0 = all jaw/jittery, 1 = all ear/rigid)
+  // YOLO/pose shoulders give the most robust neck scale (they don't foreshorten when the head
+  // turns), so blend a shoulder-span estimate into the radius for the correct ratio on turns.
+  SHOULDER_RADIUS_K: 0.2, // neck radius ≈ shoulder span × this
+  SHOULDER_RADIUS_W: 0.4, // blend weight of the shoulder-based radius (0..1) — YOLO drives giãn nở
+  RADIUS_MIN: 0.3, // lower clamp on neck radius, as a fraction of face width
+  RADIUS_MAX: 0.5, // upper clamp on neck radius, as a fraction of face width
+  CHAIN_GAP: 1.02, // chain radius = neck radius * CHAIN_GAP (rides just outside the neck)
+  CHAIN_THICK: 0.015, // chain tube radius as a fraction of neck radius — keep SMALL (thin chain)
+  OCCLUDER_RADIUS: 0.9, // neck-occluder radius as a fraction of neck radius (hides only the nape)
+  OCCLUDER_PUSH: 0.3, // push the occluder back (× neck radius) so it never hides the FRONT chain
+  TILT_DEG: 22, // forward tilt of the necklace plane (more = drapes lower / “bè” at the front)
+  FRONT_SAG: 0.05, // subtle dip at the front centre from the pendant's weight, in face-heights
+  // A real chain is FLEXIBLE: it sags in a soft catenary between the sides of the neck. DRAPE is
+  // how deep the front hangs (face-heights); DRAPE_POWER shapes the curve (higher = sharper V).
+  DRAPE: 0.16,
+  DRAPE_POWER: 2.2,
+  // Head pitch (look up/down) opens/closes the ring. The neutral baseline self-calibrates per
+  // person (PITCH_SMOOTH) so it measures the CHANGE in pitch, then it's gently clamped.
+  PITCH_GAIN: 3.3,
+  PITCH_MAX: 26, // clamp on the pitch contribution to the tilt, in degrees
+  PITCH_SMOOTH: 0.02, // how fast the neutral-pose baseline adapts per person (0..1, small = slow)
   YAW_GAIN: 0.85, // how strongly a head turn rotates the ring around the neck
   YAW_MAX: 78, // clamp on the wrap rotation, in degrees
   YAW_SIGN: 1, // flip to -1 if the wrap rotates the wrong way for your camera mirroring
+  ROLL_GAIN: 0.8, // how much the neck-tilt rotates the necklace (a real chain drapes < full tilt)
+  ROLL_SHOULDER: 0.5, // blend ear-roll → shoulder-roll when they AGREE (0..1)
+  ROLL_AGREE: 22, // only trust shoulder tilt if within this many degrees of the head tilt
+  ROLL_MAX: 30, // hard clamp on necklace tilt (deg) so the ring can never rotate edge-on
   FOLLOW: 0.15, // horizontal follow of the head turn (keep small so it stays centred)
-  SHOULDER_WEIGHT: 0.25, // gentle blend toward the shoulder midpoint (0..1) — must stay small
-  PHOTO_DROP: 0.34, // how far the pendant photo hangs below the chain front, in photo-widths
-  FILTER_MIN_CUTOFF: 1.7, // One Euro: lower = smoother at rest (more lag)
-  FILTER_BETA: 0.05 // One Euro: higher = less lag on fast moves (tighter real-time follow)
+  SHOULDER_WEIGHT: 0.35, // blend toward the shoulder midpoint (0..1) — keeps it centred on the body
+  PHOTO_DROP: 0.32, // how far the pendant photo hangs below the chain front, in photo-widths
+  FILTER_MIN_CUTOFF: 1.3, // One Euro (position): lower = smoother at rest (more lag)
+  FILTER_BETA: 0.04, // One Euro (position): higher = less lag on fast moves
+  FILTER_RAD_CUTOFF: 0.5, // One Euro (radius): very low = rock-steady ring size (kills pulsing)
+  FILTER_RAD_BETA: 0.003, // One Euro (radius): tiny so the ring doesn't breathe in/out
+  FILTER_ROT_CUTOFF: 0.6, // One Euro (yaw/roll): low = very steady rotation (kills sway)
+  FILTER_ROT_BETA: 0.006 // One Euro (yaw/roll): keep tiny so the necklace doesn't wobble
 };

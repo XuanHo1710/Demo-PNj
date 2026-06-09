@@ -36,28 +36,35 @@ export function createPendant() {
   group.add(piece.group);
 
   // One Euro filters smooth each pose channel independently (industry-standard AR smoothing).
+  // Position channels (x/y) stay responsive; radius and the rotation channels (yaw/roll) get a
+  // much gentler filter so the necklace doesn't pulse or sway/wobble ("rung") with tiny moves.
   const fo = { minCutoff: PENDANT.FILTER_MIN_CUTOFF, beta: PENDANT.FILTER_BETA };
+  const frad = { minCutoff: PENDANT.FILTER_RAD_CUTOFF, beta: PENDANT.FILTER_RAD_BETA };
+  const fr = { minCutoff: PENDANT.FILTER_ROT_CUTOFF, beta: PENDANT.FILTER_ROT_BETA };
   const filt = {
     x: new OneEuroFilter(fo),
     y: new OneEuroFilter(fo),
-    r: new OneEuroFilter(fo),
-    yaw: new OneEuroFilter({ minCutoff: PENDANT.FILTER_MIN_CUTOFF, beta: PENDANT.FILTER_BETA * 2 }),
-    roll: new OneEuroFilter(fo)
+    r: new OneEuroFilter(frad),
+    yaw: new OneEuroFilter(fr),
+    roll: new OneEuroFilter(fr),
+    pitch: new OneEuroFilter(fr)
   };
   const _photo = new THREE.Vector3();
 
-  // center: world Vector3 (px) at the neck centre. size/radius/faceH: px. yaw/roll: radians.
-  function update(center, size, radius, yaw, roll, faceH) {
+  // center: world Vector3 (px) at the neck centre. size/radius/faceH: px. yaw/roll/pitch: radians.
+  function update(center, size, radius, yaw, roll, pitch, faceH) {
     const t = performance.now() / 1000;
     const Cx = filt.x.filter(center.x, t);
     const Cy = filt.y.filter(center.y, t);
     const R = filt.r.filter(radius, t);
     const phi = filt.yaw.filter(yaw, t); // head yaw → ring rotation about the neck axis
-    const rollS = filt.roll.filter(roll, t);
+    const rollS = filt.roll.filter(roll, t) * PENDANT.ROLL_GAIN; // damped so the ring doesn't sway
+    const pitchS = filt.pitch.filter(pitch, t); // head up/down → opens/closes the ring
 
     const Rc = R * PENDANT.CHAIN_GAP; // chain rides just outside the neck surface
-    const tilt = PENDANT.TILT_DEG * DEG; // forward tilt (front lower than the nape)
-    const frontSag = faceH * PENDANT.FRONT_SAG; // extra dip at the front centre
+    const tilt = PENDANT.TILT_DEG * DEG + pitchS; // forward tilt + live head pitch
+    const frontSag = faceH * PENDANT.FRONT_SAG; // small pendant-weight dip
+    const drape = faceH * PENDANT.DRAPE; // soft catenary hang of a real, flexible chain
     const cT = Math.cos(tilt), sT = Math.sin(tilt);
     const cP = Math.cos(phi), sP = Math.sin(phi);
     const cR = Math.cos(rollS), sR = Math.sin(rollS);
@@ -67,7 +74,7 @@ export function createPendant() {
     // forward (largest z), so it always sits at the front-bottom by gravity.
     const N = 72;
     const pts = [];
-    let frontZ = -Infinity, fx = Cx, fy = Cy;
+    let frontZ = -Infinity, frontX = Cx, frontY = Cy;
     for (let i = 0; i < N; i++) {
       const alpha = (i / N) * Math.PI * 2;
       const lx = Rc * Math.sin(alpha);
@@ -82,10 +89,13 @@ export function createPendant() {
       // roll about Z + translate into world px
       const sx = Cx + yx * cR - yy * sR;
       let sy = Cy + yx * sR + yy * cR;
-      // pendant-weight dip: only the forward-facing portion sags down (gravity)
+      // gravity: the forward-facing arc hangs down in a soft catenary (flexible real chain),
+      // plus a small extra dip from the pendant's weight at the very front centre.
       const frontness = Math.max(0, yz / Rc);
+      sy -= drape * Math.pow(frontness, PENDANT.DRAPE_POWER);
       sy -= frontSag * frontness * frontness;
-      if (yz > frontZ) { frontZ = yz; fx = sx; fy = sy; }
+      // The most forward point is where the pendant's bail sits (front centre of the chain).
+      if (yz > frontZ) { frontZ = yz; frontX = sx; frontY = sy; }
       pts.push(new THREE.Vector3(sx, sy, yz));
     }
     const curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal'); // closed loop
@@ -93,15 +103,19 @@ export function createPendant() {
     chain.geometry.dispose();
     chain.geometry = new THREE.TubeGeometry(curve, 160, tubeR, 6, true);
 
-    // Neck occluder: a tall invisible cylinder, set a touch inside the chain so the front of
-    // the ring stays visible while the back gets hidden.
-    const occR = R * 0.92;
+    // Neck occluder: a tall invisible cylinder pushed BACK in z so it hides the nape + back
+    // sides of the chain (making the ring read as a full 360° loop) but never the forward,
+    // tilted-down FRONT of the chain. It also tilts with the neck (rollS) so the hidden region
+    // tracks the real nape when the head/body leans.
+    const occR = R * PENDANT.OCCLUDER_RADIUS;
     occluder.geometry.dispose();
-    occluder.geometry = new THREE.CylinderGeometry(occR, occR, faceH * 2.4, 32, 1, true);
-    occluder.position.set(Cx, Cy - faceH * 0.2, 0);
+    occluder.geometry = new THREE.CylinderGeometry(occR, occR, faceH * 2.6, 36, 1, true);
+    occluder.position.set(Cx, Cy - faceH * 0.2, -R * PENDANT.OCCLUDER_PUSH);
+    occluder.rotation.z = rollS;
 
-    // Pendant photo hangs from the front-most chain point, kept upright (gravity).
-    _photo.set(fx, fy - size * PENDANT.PHOTO_DROP, 0);
+    // Pendant hangs straight down (gravity) from the chain's front centre (the bail), so it
+    // stays connected to the chain and reads as truly worn, without swaying side to side.
+    _photo.set(frontX, frontY - size * PENDANT.PHOTO_DROP, 0);
     piece.place(_photo, size, 0);
     piece.group.position.z = frontZ + size * 0.5; // sit in front of the neck & chain
   }

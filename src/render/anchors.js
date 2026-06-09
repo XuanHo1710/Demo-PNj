@@ -5,6 +5,10 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const DEG = Math.PI / 180;
 
+// Self-calibrating neutral for the vertical face ratio, so head pitch is measured as the CHANGE
+// from each person's own straight-ahead pose (no fixed per-face assumption).
+let pitchNeutral = null;
+
 // Maps a normalized MediaPipe landmark (0..1 in the *un-mirrored* camera image) to on-screen
 // pixels. The video is shown `object-fit: contain` (full frame, letterboxed), so we use the
 // matching contain transform plus the selfie mirror. Origin top-left, y down.
@@ -90,9 +94,6 @@ export function pendantFromFace(landmarks, map, shoulders) {
   const faceWidth = dist(earL, earR);
   const faceHeight = dist(top, chin);
 
-  // Head roll from the ear line. Screen is y-down but the renderer is y-up, so negate.
-  const roll = -Math.atan2(earR.y - earL.y, earR.x - earL.x);
-
   // Head yaw from ear↔nose foreshortening (mirror-safe in screen space): >0 when the face
   // turns toward screen-right. Drives how far the chain rotates around the neck.
   const distL = dist(earL, nose);
@@ -104,6 +105,20 @@ export function pendantFromFace(landmarks, map, shoulders) {
     PENDANT.YAW_MAX * DEG
   );
 
+  // Head pitch (look up/down). The vertical face proportion (forehead→nose vs nose→chin) is
+  // mirror-invariant and sign-stable. Its neutral baseline self-calibrates while the head is
+  // roughly straight, so we read the change in pitch and the ring opens/closes like a real one.
+  const upper = Math.abs(nose.y - top.y);
+  const lower = Math.abs(chin.y - nose.y);
+  const vRatio = lower / (upper + lower || 1);
+  if (pitchNeutral === null) pitchNeutral = vRatio;
+  if (Math.abs(yaw) < 0.25) pitchNeutral += (vRatio - pitchNeutral) * PENDANT.PITCH_SMOOTH;
+  const pitch = clamp(
+    (pitchNeutral - vRatio) * PENDANT.PITCH_GAIN,
+    -PENDANT.PITCH_MAX * DEG,
+    PENDANT.PITCH_MAX * DEG
+  );
+
   // Are the shoulders a trustworthy, in-frame match for THIS face?
   const haveShoulders =
     shoulders &&
@@ -111,16 +126,41 @@ export function pendantFromFace(landmarks, map, shoulders) {
     shoulders.visR > POSE.MIN_VIS &&
     (shoulders.left.y + shoulders.right.y) / 2 > chin.y;
 
-  // Per-person neck width, measured LIVE from the jaw angle every frame so the curve fits each
-  // person. The jaw span foreshortens as the head turns, so divide by cos(yaw) to recover the
-  // true frontal width (the renderer re-applies the turn). Clamp against landmark glitches.
+  // Necklace tilt (roll). A necklace lies on the NECK/BODY, so its tilt should follow the body.
+  // The face ear-line is the RELIABLE base read in a head-shot; the shoulder line (YOLO/pose)
+  // refines it ONLY when the two agree — in tight/dark frames the shoulders are often mis-read,
+  // and trusting them blindly tips the whole ring over (the lopsided-collapse bug). Screen is
+  // y-down but the renderer is y-up, so negate; both formulas put the larger-x point first so
+  // they share one sign convention.
+  let roll = -Math.atan2(earR.y - earL.y, earR.x - earL.x);
+  if (haveShoulders) {
+    // shoulders.left is the person's left shoulder, which sits at the LARGER screen x (mirror).
+    const sRoll = -Math.atan2(
+      shoulders.left.y - shoulders.right.y,
+      shoulders.left.x - shoulders.right.x
+    );
+    // Reject a shoulder tilt that disagrees with the head by more than the trust window.
+    if (Math.abs(sRoll - roll) < PENDANT.ROLL_AGREE * DEG) {
+      roll = lerp(roll, sRoll, PENDANT.ROLL_SHOULDER);
+    }
+  }
+  // Hard clamp: a real necklace never tips far, and this guarantees the ring stays a wide,
+  // neck-wrapping ellipse instead of rotating edge-on into a thin sliver.
+  roll = clamp(roll, -PENDANT.ROLL_MAX * DEG, PENDANT.ROLL_MAX * DEG);
+
+  // Per-person neck width. Start from the jaw angle (yaw-corrected so it doesn't shrink on a
+  // turn) blended with a stable ear-span estimate, then fold in the shoulder span — the most
+  // robust scale of all, because the shoulders barely foreshorten when only the head turns.
   const yawCos = Math.max(0.5, Math.cos(yaw));
   const jawHalf = dist(jawL, jawR) / yawCos / 2;
-  const radius = clamp(
-    jawHalf * PENDANT.NECK_WIDTH, // grow the measured jaw half-width out to the neck/skin radius
-    faceWidth * PENDANT.RADIUS_MIN,
-    faceWidth * PENDANT.RADIUS_MAX
-  );
+  const jawBased = jawHalf * PENDANT.NECK_WIDTH;
+  const earBased = faceWidth * PENDANT.RADIUS_EAR;
+  let radius = lerp(jawBased, earBased, PENDANT.RADIUS_STABLE);
+  if (haveShoulders) {
+    const shoulderR = dist(shoulders.left, shoulders.right) * PENDANT.SHOULDER_RADIUS_K;
+    radius = lerp(radius, shoulderR, PENDANT.SHOULDER_RADIUS_W);
+  }
+  radius = clamp(radius, faceWidth * PENDANT.RADIUS_MIN, faceWidth * PENDANT.RADIUS_MAX);
 
   // Horizontal neck centre = the head's vertical centreline (jaw-corner midpoint). It's
   // symmetric by construction, so the necklace stays centred on the neck instead of drifting
@@ -148,6 +188,7 @@ export function pendantFromFace(landmarks, map, shoulders) {
     radius, // neck-cylinder radius (px), measured live per person
     yaw, // wrap rotation around the neck (rad)
     roll, // head tilt (rad, y-up)
+    pitch, // head up/down (rad) — opens/closes the ring
     faceH: faceHeight // for the drape sag + occluder height (px)
   };
 }
