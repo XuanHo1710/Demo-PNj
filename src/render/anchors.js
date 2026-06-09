@@ -1,7 +1,9 @@
-import { HAND, FACE, PENDANT } from '../config.js';
+import { HAND, FACE, PENDANT, POSE } from '../config.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const DEG = Math.PI / 180;
 
 // Maps a normalized MediaPipe landmark (0..1 in the *un-mirrored* camera image) to on-screen
 // pixels. The video is shown `object-fit: contain` (full frame, letterboxed), so we use the
@@ -73,22 +75,55 @@ export function earsFromFace(landmarks, map) {
   };
 }
 
-// Screen-space pendant placement: a product photo on the neckline plus chain anchors near
-// the sides of the neck. Built from the chin, forehead and ear landmarks.
-export function pendantFromFace(landmarks, map) {
+// Screen-space necklace placement. Returns the parameters of a 3D loop that the renderer wraps
+// around a neck cylinder: the neck centre, its radius, plus head yaw (turn) and roll (tilt).
+// `shoulders` is optional ({ left, right, visL, visR } in screen px) and, when confident, keeps
+// the chain anchored to the body so it stays around the neck as the head turns.
+export function pendantFromFace(landmarks, map, shoulders) {
   const chin = map(landmarks[FACE.CHIN]);
   const top = map(landmarks[FACE.FOREHEAD]);
-  const earR = map(landmarks[FACE.EAR_RIGHT]);
-  const earL = map(landmarks[FACE.EAR_LEFT]);
+  const earR = map(landmarks[FACE.EAR_RIGHT]); // person's right ear (screen-right, larger x)
+  const earL = map(landmarks[FACE.EAR_LEFT]); //  person's left ear (screen-left, smaller x)
+  const nose = map(landmarks[4]);
   const faceWidth = dist(earL, earR);
   const faceHeight = dist(top, chin);
 
-  const center = { x: chin.x, y: chin.y + faceHeight * PENDANT.DROP };
-  // Chain ends sit up at the sides of the neck (blended from the ears toward the chin), so
-  // the chain rises around the neck instead of lying flat.
-  const side = (ear) => ({
-    x: lerp(ear.x, chin.x, PENDANT.NECK_INSET), // horizontal: width of the drape
-    y: ear.y + faceHeight * PENDANT.NECK_DROP // vertical: relative to ear Y for stability when looking down
-  });
-  return { center, size: faceWidth * PENDANT.SIZE, neckRight: side(earR), neckLeft: side(earL) };
+  // Head roll from the ear line. Screen is y-down but the renderer is y-up, so negate.
+  const roll = -Math.atan2(earR.y - earL.y, earR.x - earL.x);
+
+  // Head yaw from ear↔nose foreshortening (mirror-safe in screen space): >0 when the face
+  // turns toward screen-right. Drives how far the chain rotates around the neck.
+  const distL = dist(earL, nose);
+  const distR = dist(earR, nose);
+  const yawRaw = (distL - distR) / (distL + distR || 1);
+  const yaw = clamp(
+    PENDANT.YAW_SIGN * yawRaw * PENDANT.YAW_GAIN * (Math.PI / 2),
+    -PENDANT.YAW_MAX * DEG,
+    PENDANT.YAW_MAX * DEG
+  );
+
+  // Horizontal neck centre = the head's vertical centreline (jaw-corner midpoint). It's
+  // symmetric by construction, so the necklace stays centred on the neck instead of drifting
+  // to one side. A small follow toward the nose eases it with strong head turns. Shoulders only
+  // nudge it gently, and are ignored when they disagree wildly with the face (a misdetection),
+  // so they can never yank the necklace off-centre.
+  const centreX = (earL.x + earR.x) / 2;
+  let cx = lerp(centreX, nose.x, PENDANT.FOLLOW);
+  if (shoulders && shoulders.visL > POSE.MIN_VIS && shoulders.visR > POSE.MIN_VIS) {
+    const midX = (shoulders.left.x + shoulders.right.x) / 2;
+    const midY = (shoulders.left.y + shoulders.right.y) / 2;
+    if (midY > chin.y && Math.abs(midX - centreX) < faceWidth * 0.5) {
+      cx = lerp(cx, midX, PENDANT.SHOULDER_WEIGHT);
+    }
+  }
+  const cy = chin.y + faceHeight * PENDANT.NECK_DROP;
+
+  return {
+    center: { x: cx, y: cy }, // neck-cylinder centre (front low point of the drape)
+    size: faceWidth * PENDANT.SIZE, // pendant photo width (px)
+    radius: faceWidth * PENDANT.NECK_RADIUS, // neck-cylinder radius (px)
+    yaw, // wrap rotation around the neck (rad)
+    roll, // head tilt (rad, y-up)
+    faceH: faceHeight // for the drape sag + occluder height (px)
+  };
 }

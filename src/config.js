@@ -6,7 +6,17 @@ export const MEDIAPIPE = {
   handModel:
     'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
   faceModel:
-    'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task'
+    'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+  // Lite pose model — fast enough to run alongside the face mesh for the necklace.
+  poseModel:
+    'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task'
+};
+
+// MediaPipe pose-landmark indices (33-point model).
+export const POSE = {
+  L_SHOULDER: 11, // person's left shoulder
+  R_SHOULDER: 12, // person's right shoulder
+  MIN_VIS: 0.5 // ignore shoulders below this visibility (e.g. cropped out of frame)
 };
 
 export const CAMERA = {
@@ -42,11 +52,24 @@ export const FACE = {
   EARRING_CROP: { x: 0.02, y: 0.22, w: 0.46, h: 0.56 }
 };
 
-// Pendant / necklace placement, relative to face dimensions so it scales with distance.
+// Necklace placement. The chain is modelled as a real 3D ring that FULLY wraps a neck cylinder
+// (360°): the front + sides are visible and the back is hidden behind the neck occluder, so it
+// reads as a complete necklace worn around the neck and stays wrapped when the head turns.
+// Sizes are relative to the face so they scale with distance. Tweak while framing the shot.
 export const PENDANT = {
-  DROP: 0.46, // pendant centre below the chin (sits on the upper chest), in face-heights
-  SIZE: 0.5, // pendant width as a fraction of face width
-  // Chain ends sit just below the chin, at the sides of the neck.
-  NECK_INSET: 0.18, // chain-end X: blend from the ears toward the chin (0 = at ears, wide)
-  NECK_DROP: 0.45 // chain-end Y: how far below the ears, in face-heights (sits around jaw/neck level)
+  SIZE: 0.46, // pendant photo width as a fraction of face width
+  NECK_DROP: 0.3, // neck-cylinder centre below the chin, in face-heights (sits low on the neck)
+  NECK_RADIUS: 0.42, // neck-cylinder radius as a fraction of face width (snug = smaller)
+  CHAIN_GAP: 1.06, // chain radius = NECK_RADIUS * CHAIN_GAP (rides just outside the neck)
+  CHAIN_THICK: 0.016, // chain tube radius as a fraction of neck radius — keep SMALL (thin chain)
+  TILT_DEG: 24, // forward tilt of the necklace plane (front sits lower than the nape)
+  FRONT_SAG: 0.05, // extra dip at the front centre from the pendant's weight, in face-heights
+  YAW_GAIN: 0.85, // how strongly a head turn rotates the ring around the neck
+  YAW_MAX: 78, // clamp on the wrap rotation, in degrees
+  YAW_SIGN: 1, // flip to -1 if the wrap rotates the wrong way for your camera mirroring
+  FOLLOW: 0.15, // horizontal follow of the head turn (keep small so it stays centred)
+  SHOULDER_WEIGHT: 0.25, // gentle blend toward the shoulder midpoint (0..1) — must stay small
+  PHOTO_DROP: 0.34, // how far the pendant photo hangs below the chain front, in photo-widths
+  FILTER_MIN_CUTOFF: 1.2, // One Euro: lower = smoother at rest (more lag)
+  FILTER_BETA: 0.03 // One Euro: higher = less lag on fast moves
 };

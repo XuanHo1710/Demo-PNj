@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CAMERA } from './config.js';
+import { CAMERA, POSE } from './config.js';
 import { createStage } from './render/scene.js';
 import { createRing } from './render/jewelry/ring.js';
 import { createEarring } from './render/jewelry/earring.js';
@@ -7,6 +7,7 @@ import { createPendant } from './render/jewelry/pendant.js';
 import { makeMapper, ringFromHand, earsFromFace, pendantFromFace } from './render/anchors.js';
 import { createHandTracker } from './tracking/handTracker.js';
 import { createFaceTracker } from './tracking/faceTracker.js';
+import { createPoseTracker } from './tracking/poseTracker.js';
 import { setupUI } from './ui/overlay.js';
 import ringData from './catalog/ring.json';
 import earringData from './catalog/earring.json';
@@ -118,6 +119,7 @@ const mapper = makeMapper(() => ({
 const v = Array.from({ length: 4 }, () => new THREE.Vector3());
 let hand = null;
 let face = null;
+let pose = null;
 
 function frame() {
   const ts = performance.now();
@@ -147,13 +149,23 @@ function frame() {
   } else if (ready && state.mode === 'necklace' && face) {
     const lm = face.detect(video, ts);
     if (lm) {
-      const p = pendantFromFace(lm, mapper);
-      pendant.update(
-        stage.toWorld(p.center, v[0]),
-        p.size,
-        stage.toWorld(p.neckLeft, v[1]),
-        stage.toWorld(p.neckRight, v[2])
-      );
+      // Shoulders (best-effort) anchor the chain to the body so it stays around the neck.
+      let shoulders = null;
+      if (pose) {
+        const pl = pose.detect(video, ts);
+        if (pl) {
+          const L = pl[POSE.L_SHOULDER];
+          const R = pl[POSE.R_SHOULDER];
+          shoulders = {
+            left: mapper(L),
+            right: mapper(R),
+            visL: L.visibility ?? 1,
+            visR: R.visibility ?? 1
+          };
+        }
+      }
+      const p = pendantFromFace(lm, mapper, shoulders);
+      pendant.update(stage.toWorld(p.center, v[0]), p.size, p.radius, p.yaw, p.roll, p.faceH);
       hideAll();
       pendant.group.visible = true;
       detected = true;
@@ -174,13 +186,19 @@ async function boot() {
     await startCamera();
     ui.setBootHint('Loading AI models (first load downloads ~10 MB)…');
     [hand, face] = await Promise.all([createHandTracker(), createFaceTracker()]);
+    // Pose is best-effort: if it fails to load, the necklace falls back to face-only tracking.
+    try {
+      pose = await createPoseTracker();
+    } catch (err) {
+      console.warn('Pose model unavailable; necklace will use face landmarks only.', err);
+    }
     ui.bootDone();
     requestAnimationFrame(frame);
   } catch (err) {
     console.error(err);
     ui.setBootHint(
       'Camera or model failed to start. Needs camera permission + a secure context ' +
-        '(localhost or https). Details in the console.'
+      '(localhost or https). Details in the console.'
     );
   }
 }
