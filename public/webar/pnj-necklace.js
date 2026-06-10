@@ -273,54 +273,75 @@
         REFS.neck = buildNeckModel();
         buildNecklace();
 
+        // Now that the camera is live we know its REAL frame aspect — relayout the
+        // canvases to "contain" that exact aspect (kills any residual zoom from the
+        // 16:9 default guess) and tell the engine to re-fit the GL viewport + camera.
+        const vw = REFS.helper.get_sourceWidth ? REFS.helper.get_sourceWidth() : 0;
+        const vh = REFS.helper.get_sourceHeight ? REFS.helper.get_sourceHeight() : 0;
+        if (vw && vh) {
+            _videoAspect = vw / vh;
+            const b = layoutCanvases(_videoAspect);
+            REFS.helper.resize(b.w, b.h);
+        }
+
         STATE.booted = true;
         hideBoot();
         if (STATE.product) setProduct(STATE.product);
     }
 
     // ---------------------------------------------------------------------------
-    // Canvas sizing. We drive the engine via the Three helper directly (not the
-    // Mirror wrapper), so WE must set the canvas pixel resolution — otherwise both
-    // canvases stay at the default 300×150 and get stretched to the phone screen
-    // (blurry video + squashed necklace). Match the CSS box: width = min(100vw,
-    // 100vh), height = 100%, scaled by a capped devicePixelRatio (cap keeps the
-    // per-frame GL video draw + 3D render fast on hi-DPI phones).
+    // Canvas sizing — "contain" the camera frame (NO zoom crop).
+    //
+    // We drive the engine via the Three helper directly (not the Mirror wrapper),
+    // so WE own the canvas sizing. The engine draws the video to FILL ("cover") the
+    // canvas, which zooms/crops hard when the canvas aspect ≠ video aspect (that was
+    // the "phóng to" bug on portrait phones). Fix: size the canvas to the VIDEO's
+    // aspect and letterbox it into the screen (centered via CSS) — then cover == no
+    // crop, so the full wide camera frame shows, sharp and un-zoomed. This matches
+    // the main app's `#camera { object-fit: contain }`.
     // ---------------------------------------------------------------------------
-    function computeDisplaySize() {
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
-        const cssW = Math.min(window.innerWidth, window.innerHeight); // CSS: width:100vw; max-width:100vh
-        const cssH = window.innerHeight;                              // CSS: height:100%
-        return { w: Math.round(cssW * dpr), h: Math.round(cssH * dpr) };
+    const DEFAULT_VIDEO_ASPECT = 16 / 9; // landscape capture; corrected once the camera is live
+    let _videoAspect = DEFAULT_VIDEO_ASPECT;
+
+    function layoutCanvases(aspect) {
+        const dpr = Math.min(window.devicePixelRatio || 1, 2); // cap dpr → keep mobile FPS up
+        const sw = window.innerWidth;
+        const sh = window.innerHeight;
+        let cssW, cssH;
+        if (aspect > sw / sh) {
+            cssW = sw;                       // video wider than screen → fit width, letterbox top/bottom
+            cssH = Math.round(sw / aspect);
+        } else {
+            cssH = sh;                       // fit height, letterbox left/right
+            cssW = Math.round(sh * aspect);
+        }
+        const buf = { w: Math.max(2, Math.round(cssW * dpr)), h: Math.max(2, Math.round(cssH * dpr)) };
+        ['WebARRocksFaceCanvas', 'threeCanvas'].forEach(function (id) {
+            const cv = document.getElementById(id);
+            if (!cv) return;
+            cv.style.width = cssW + 'px';
+            cv.style.height = cssH + 'px';
+            cv.width = buf.w;   // engine reads these as the render resolution
+            cv.height = buf.h;
+        });
+        return buf;
     }
 
-    function sizeCanvases() {
-        const s = computeDisplaySize();
-        const f = document.getElementById('WebARRocksFaceCanvas');
-        const t = document.getElementById('threeCanvas');
-        if (f) { f.width = s.w; f.height = s.h; }
-        if (t) { t.width = s.w; t.height = s.h; }
-        return s;
-    }
-
-    // Ask the camera for a frame whose orientation matches the screen, so a portrait
-    // phone gets a portrait frame (much less crop than the default 800×600 landscape).
-    // These are "ideal" hints within the engine's [480,1920] bounds — if a device
-    // can't honour them it just returns its closest frame and the cover-crop still works.
-    function pickVideoSettings() {
-        const portrait = window.innerHeight >= window.innerWidth;
-        return portrait
-            ? { facingMode: 'user', idealWidth: 720, idealHeight: 1280 }
-            : { facingMode: 'user', idealWidth: 1280, idealHeight: 720 };
+    // Always request a LANDSCAPE frame: phone front sensors are landscape-native, so a
+    // landscape request returns the FULL sensor FoV (wide). Requesting portrait makes
+    // the browser center-crop the sensor → zoomed in. 1280×720 is sharp but light.
+    function videoSettings() {
+        return { facingMode: 'user', idealWidth: 1280, idealHeight: 720 };
     }
 
     function startTracking() {
         REFS.helper = WebARRocksFaceThreeHelper;
-        sizeCanvases(); // MUST run before init() so the engine adopts the right resolution
+        layoutCanvases(_videoAspect); // MUST run before init() so the engine adopts the resolution
         REFS.helper.init({
             spec: {
                 NNCPath: 'neuralNets/NN_NECKLACE_9.json',
                 scanSettings: { threshold: 0.7 },
-                videoSettings: pickVideoSettings()
+                videoSettings: videoSettings()
             },
             canvas: document.getElementById('WebARRocksFaceCanvas'),
             canvasThree: document.getElementById('threeCanvas'),
@@ -412,10 +433,10 @@
 
         const resize = function () {
             if (!REFS.helper || !STATE.booted) return;
-            const s = computeDisplaySize();
-            // helper.resize() sets both canvas buffers, recomputes the camera FoV/aspect
-            // and the composer size, so the necklace stays aligned after a rotate.
-            REFS.helper.resize(s.w, s.h);
+            // re-fit the (now known) camera aspect into the new screen size, then let the
+            // helper recompute the GL viewport, camera FoV/aspect and composer size.
+            const b = layoutCanvases(_videoAspect);
+            REFS.helper.resize(b.w, b.h);
         };
         window.addEventListener('resize', resize);
         // innerHeight updates a beat AFTER orientationchange on some mobile browsers.
