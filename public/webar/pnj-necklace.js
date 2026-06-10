@@ -34,15 +34,29 @@
         CHAIN_RADIAL: 10,       // tube radial segments (roundness)
         FRONT_DRAPE: 26,        // extra downward sag at the front centre from the chain's weight (mm)
         LOOP_SAMPLES: 170,      // points sampled around the neck for the curve
+        // The raw neck-side points sit HIGH (near the jaw). These pull the sides + nape DOWN
+        // toward the front level so the chain rests on the neck/collar and its two ends tuck
+        // in low, instead of shooting up beside the jaw and floating ("giả chân").
+        SIDE_RAISE: 0.5,        // 0 = sides as low as the front (flat), 1 = up at the raw neck-top points
+        BACK_RAISE: 0.7,        // how high the nape rides (it's hidden by the occluder anyway)
 
         PENDANT_SIZE: 46,       // pendant width (mm); height follows the image aspect ratio
         PENDANT_GAP: 4,         // gap between the chain front point and the top of the pendant (mm)
         PENDANT_FWD: 6,         // push the pendant slightly forward of the chain so it never z-fights (mm)
         PENDANT_TILT: -0.12,    // small forward lean (rad) so the charm faces the camera a touch
-        // Gravity: when you LEAN, the chain rolls with your neck but a real pendant swings
-        // back toward vertical (it hangs). 0 = rigid (rolls fully with you), 1 = full
-        // gravity (always points straight down). Flip the sign if it swings the wrong way.
-        PENDANT_GRAVITY: 0.6,
+
+        // --- Pendant PHYSICS (the "lắc qua lắc lại" secondary motion) -------------
+        // The pendant hangs from the chain (its bail) and behaves like a real PENDULUM:
+        // a spring-damper that chases a gravity-vertical target but LAGS behind your
+        // motion, so it overshoots and swings, then settles. Driven by the actual neck
+        // pose (nod / lean) + a head-shake impulse — no noisy derivatives.
+        PHYS_ENABLED: true,
+        PHYS_STIFFNESS: 120,    // spring constant → swing frequency (higher = snappier, faster return)
+        PHYS_DAMPING: 6.0,      // damping (higher = settles faster / fewer wobbles; lower = swings more)
+        GRAVITY_ROLL: 0.85,     // lean (roll) → how strongly the charm stays vertical (0..1). The pendulum.
+        GRAVITY_PITCH: 0.55,    // nod (pitch) → forward/back hang response when you look up/down (0..1)
+        YAW_SHAKE_KICK: 0.6,    // head-shake (yaw) → sideways swing impulse (the "lắc trái phải")
+        SWING_MAX: 0.55,        // hard clamp on swing angle (rad, ~31°) so fast motion never looks broken
 
         TAA_LEVEL: 3,           // engine temporal anti-aliasing samples (0 = off). Demo uses 3.
 
@@ -51,6 +65,14 @@
         CHAIN_ROUGHNESS: 0.26,
         CHAIN_METALNESS: 1.0,
         CHAIN_ENVINTENSITY: 1.15,
+
+        // Neck occluder — an invisible depth-only cylinder shaped to the neck. It HIDES the
+        // chain where it wraps BEHIND the neck, so the two ends tuck behind it instead of
+        // floating ("giả chân"). The front + sides stick out past it and stay visible.
+        OCCLUDER_ENABLED: true,
+        OCCLUDER_SCALE: 0.9,    // occluder radius vs chain radius (smaller → shows more sides, larger → hides more)
+        OCCLUDER_PUSH: 18,      // push the occluder BACK (mm) so it never eats the front chain / pendant
+        OCCLUDER_HEIGHT: 260,   // occluder cylinder height (mm) — tall enough to cover the whole neck
 
         // 3D pose FOLLOW — how much the necklace rotates with you on each axis. The
         // WebAR.rocks demo damped these (yaw 0.3 / roll 0.5) for a rigid pendant model,
@@ -172,17 +194,26 @@
         const centerZ = (F.z + B.z) / 2;
 
         // Y around the loop as a quadratic in c = cos(theta):
-        //   theta = 0   -> front  (c =  1) -> yFront  (neckline base, dragged down by FRONT_DRAPE)
-        //   theta = ±90 -> sides  (c =  0) -> ySide   (chain rests on the neck sides)
-        //   theta = 180 -> back   (c = -1) -> yBack   (rises around the nape, hidden by occluder)
+        //   theta = 0   -> front (c= 1) -> yFront : the drape, low on the chest
+        //   theta = ±90 -> sides (c= 0) -> ySide  : where the chain rests on the neck sides
+        //   theta = 180 -> back  (c=-1) -> yBack  : the nape, hidden by the occluder
+        // The raw neck-side points sit high (near the jaw), so SIDE_RAISE / BACK_RAISE pull
+        // the sides and nape DOWN toward the front level — the chain then rests on the neck
+        // instead of shooting up beside the jaw (which looked fake + floating).
         const yFront = (F.y + Fd.y) / 2 - PARAMS.FRONT_DRAPE;
-        const ySide = (L.y + R.y) / 2;
-        const yBack = B.y;
+        const ySideRaw = (L.y + R.y) / 2;
+        const ySide = yFront + (ySideRaw - yFront) * PARAMS.SIDE_RAISE;
+        const yBack = yFront + (B.y - yFront) * PARAMS.BACK_RAISE;
         const yb = (yFront - yBack) / 2;
         const yd = (yFront + yBack) / 2 - ySide;
         const yOf = function (cosT) { return ySide + yb * cosT + yd * cosT * cosT; };
+        const centerY = (yFront + Math.max(ySide, yBack)) / 2; // occluder vertical centre
 
-        return { centerX: centerX, centerZ: centerZ, radiusX: radiusX, radiusZ: radiusZ, yOf: yOf, yFront: yFront };
+        return {
+            centerX: centerX, centerY: centerY, centerZ: centerZ,
+            radiusX: radiusX, radiusZ: radiusZ, yOf: yOf,
+            yFront: yFront, ySide: ySide, yBack: yBack
+        };
     }
 
     // ---------------------------------------------------------------------------
@@ -195,16 +226,20 @@
         loadingManager: null,
         follower: null,       // faceFollower[0] — driven by the neck pose each frame
         necklaceGroup: null,
+        neckOccluder: null,   // invisible depth cylinder that hides the wrap-behind ends
         chainMesh: null,
         chainMat: null,
-        pendantMesh: null,
+        pendantPivot: null,   // Object3D at the bail point; physics rotates THIS (pendulum)
+        pendantMesh: null,    // the product image plane, hung below the pivot
         pendantMat: null,
         neck: null,           // result of buildNeckModel()
         envMap: null,
-        gravQuat: null,       // reused each frame for the pendant gravity hang
-        gravEuler: null
+        // preallocated for the per-frame physics (no GC churn):
+        physMat: null, physQuat: null, physEuler: null, physPos: null, physScale: null
     };
     const STATE = { product: null, catalog: [], booted: false };
+    // Pendant pendulum physics state (swing angle + angular velocity per axis).
+    const PHYS = { init: false, t: 0, yaw: 0, pitch: 0, roll: 0, sx: 0, vx: 0, sz: 0, vz: 0 };
     const texLoader = new THREE.TextureLoader();
 
     // ---------------------------------------------------------------------------
@@ -237,7 +272,9 @@
         REFS.chainMesh.renderOrder = 10;
         group.add(REFS.chainMesh);
 
-        // --- Pendant: the PNJ product image hung at the front-centre -------------
+        // --- Pendant: the PNJ product image, hung from a PIVOT so it swings like a
+        //     pendulum (the pivot sits at the bail / chain-front; the plane hangs below
+        //     it, so rotating the pivot swings the charm from its top, not its centre).
         REFS.pendantMat = new THREE.MeshStandardMaterial({
             transparent: true,
             alphaTest: 0.45,
@@ -246,16 +283,42 @@
             roughness: 0.85,
             envMapIntensity: 0.25
         });
+        REFS.pendantPivot = new THREE.Object3D();
         REFS.pendantMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), REFS.pendantMat);
         REFS.pendantMesh.renderOrder = 11;
-        REFS.pendantMesh.visible = false; // shown once a texture is loaded
-        group.add(REFS.pendantMesh);
+        REFS.pendantPivot.add(REFS.pendantMesh);
+        REFS.pendantPivot.visible = false; // shown once a texture is loaded
+        group.add(REFS.pendantPivot);
 
         REFS.necklaceGroup = group;
         REFS.follower.add(group);
+        buildNeckOccluder();
     }
 
-    // Position + size the pendant under the chain's front point for a given image.
+    // An invisible neck occluder: a depth-only elliptic cylinder shaped to the neck. The
+    // chain that wraps BEHIND the neck fails the depth test against it and is hidden, so the
+    // two ends tuck behind the neck instead of floating in front ("giả chân"). The front +
+    // sides stick out past it and stay visible → it reads as truly worn around the neck.
+    // It's a child of the necklace group, so it tilts/turns with the head pose.
+    function buildNeckOccluder() {
+        if (!PARAMS.OCCLUDER_ENABLED || !REFS.neck || !REFS.necklaceGroup) return;
+        const neck = REFS.neck;
+        const geo = new THREE.CylinderGeometry(1, 1, 1, 40, 1, true); // unit, open-ended
+        const mat = new THREE.MeshBasicMaterial({ colorWrite: false }); // writes DEPTH only, no colour
+        const occ = new THREE.Mesh(geo, mat);
+        occ.renderOrder = -10000; // lay down depth before the chain (renderOrder 10) draws
+        occ.scale.set(
+            neck.radiusX * PARAMS.OCCLUDER_SCALE,
+            PARAMS.OCCLUDER_HEIGHT,
+            neck.radiusZ * PARAMS.OCCLUDER_SCALE
+        );
+        // push it BACK in Z so it hides the nape/back but never the front chain or pendant
+        occ.position.set(neck.centerX, neck.centerY, neck.centerZ - PARAMS.OCCLUDER_PUSH);
+        REFS.necklaceGroup.add(occ);
+        REFS.neckOccluder = occ;
+    }
+
+    // Position the pivot at the bail (chain front) and hang the sized plane below it.
     function layoutPendant(aspect) {
         const neck = REFS.neck;
         const w = PARAMS.PENDANT_SIZE;
@@ -266,8 +329,11 @@
         const frontX = neck.centerX;
         const frontZ = neck.centerZ + neck.radiusZ;
         const topY = neck.yFront - PARAMS.PENDANT_GAP; // chain front, minus a small gap to the bail
-        REFS.pendantMesh.position.set(frontX, topY - h / 2, frontZ + PARAMS.PENDANT_FWD);
-        REFS.pendantMesh.rotation.set(PARAMS.PENDANT_TILT, 0, 0);
+        // pivot at the bail; plane hangs h/2 below it so it swings from the top
+        REFS.pendantPivot.position.set(frontX, topY, frontZ + PARAMS.PENDANT_FWD);
+        REFS.pendantPivot.rotation.set(PARAMS.PENDANT_TILT, 0, 0);
+        REFS.pendantMesh.position.set(0, -h / 2, 0);
+        REFS.pendantMesh.rotation.set(0, 0, 0);
     }
 
     function setMetal(metal) {
@@ -291,7 +357,7 @@
             REFS.pendantMat.map = tex;
             REFS.pendantMat.needsUpdate = true;
             layoutPendant(aspect);
-            REFS.pendantMesh.visible = true;
+            REFS.pendantPivot.visible = true;
         });
     }
 
@@ -317,8 +383,12 @@
         REFS.scene = sceneObjects.threeScene;
         REFS.renderer = sceneObjects.threeRenderer;
         REFS.follower = sceneObjects.threeFaceFollowers[0];
-        REFS.gravQuat = new THREE.Quaternion(); // reused each frame by onTrack (pendant gravity)
-        REFS.gravEuler = new THREE.Euler();
+        // preallocate the per-frame physics temporaries (reused each frame, no GC):
+        REFS.physMat = new THREE.Matrix4();
+        REFS.physQuat = new THREE.Quaternion();
+        REFS.physEuler = new THREE.Euler();
+        REFS.physPos = new THREE.Vector3();
+        REFS.physScale = new THREE.Vector3();
 
         // nicer tone mapping (matches the WebAR.rocks mirror helper):
         REFS.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -439,22 +509,60 @@
             // WebAR.rocks VTONecklace demo). Needs the postprocessing scripts in the HTML.
             taaLevel: PARAMS.TAA_LEVEL,
             callbackReady: onReady,
-            // per-frame hook → hang the pendant under gravity as you lean
+            // per-frame hook → drive the pendant pendulum physics
             callbackTrack: onTrack
         });
     }
 
-    // Per-frame: the chain is fixed to your neck (it rolls fully with you), but a real
-    // pendant HANGS — so we counter a fraction of your lean on just the charm to keep it
-    // pointing toward the ground. The engine calls this after each pose update, when the
-    // follower's world matrix is current.
+    // Per-frame pendant PHYSICS — a spring-damper pendulum that makes the charm swing
+    // and settle like a real 3D model (nod → it swings forward/back, lean & head-shake →
+    // it sways side to side). The chain stays pressed to the neck (rigid is correct there);
+    // only the hanging pendant has secondary motion. Driven by the live neck pose, so it
+    // needs no noisy derivatives and can never drift.
     function onTrack() {
-        if (PARAMS.PENDANT_GRAVITY === 0 || !REFS.pendantMesh || !REFS.follower || !REFS.gravQuat) return;
-        const parent = REFS.follower.parent; // faceFollowerParent carries the neck pose rotation
-        if (!parent) return;
-        parent.getWorldQuaternion(REFS.gravQuat);
-        REFS.gravEuler.setFromQuaternion(REFS.gravQuat, 'ZYX'); // Z = roll (lean) extracted first
-        REFS.pendantMesh.rotation.z = -PARAMS.PENDANT_GRAVITY * REFS.gravEuler.z;
+        if (!PARAMS.PHYS_ENABLED || !REFS.pendantPivot || !REFS.follower) return;
+        const parent = REFS.follower.parent; // faceFollowerParent: a direct child of the scene,
+        if (!parent || !parent.visible) return; //   so parent.matrix IS its world matrix.
+
+        // Decompose the live neck pose → yaw / pitch / roll (radians).
+        REFS.physMat.copy(parent.matrix);
+        REFS.physMat.decompose(REFS.physPos, REFS.physQuat, REFS.physScale);
+        REFS.physEuler.setFromQuaternion(REFS.physQuat, 'YXZ');
+        const yaw = REFS.physEuler.y, pitch = REFS.physEuler.x, roll = REFS.physEuler.z;
+
+        const now = performance.now() / 1000;
+        if (!PHYS.init) {
+            PHYS.init = true; PHYS.t = now;
+            PHYS.yaw = yaw; PHYS.pitch = pitch; PHYS.roll = roll;
+            return;
+        }
+        let dt = now - PHYS.t; PHYS.t = now;
+        if (dt <= 0) return;
+        if (dt > 0.04) dt = 0.04; // clamp → integrator stays stable after a stall / tab switch
+
+        // head-shake angular velocity → a sideways impulse on the charm
+        const wYaw = (yaw - PHYS.yaw) / dt;
+        PHYS.yaw = yaw; PHYS.pitch = pitch; PHYS.roll = roll;
+
+        // Rest targets (in the pendant's local frame): cancel the neck rotation so the charm
+        // hangs toward vertical. The spring LAGS this target → that lag is the visible swing.
+        const restX = -PARAMS.GRAVITY_PITCH * pitch; // nod → forward/back hang
+        const restZ = -PARAMS.GRAVITY_ROLL * roll;   // lean → stays vertical
+
+        const k = PARAMS.PHYS_STIFFNESS, c = PARAMS.PHYS_DAMPING;
+        // damped harmonic oscillator, semi-implicit Euler (stable):
+        const ax = -k * (PHYS.sx - restX) - c * PHYS.vx;
+        const az = -k * (PHYS.sz - restZ) - c * PHYS.vz - PARAMS.YAW_SHAKE_KICK * wYaw;
+        PHYS.vx += ax * dt; PHYS.sx += PHYS.vx * dt;
+        PHYS.vz += az * dt; PHYS.sz += PHYS.vz * dt;
+
+        // clamp so a violent motion can never throw the charm to a broken angle
+        const m = PARAMS.SWING_MAX;
+        if (PHYS.sx > m) { PHYS.sx = m; PHYS.vx = 0; } else if (PHYS.sx < -m) { PHYS.sx = -m; PHYS.vx = 0; }
+        if (PHYS.sz > m) { PHYS.sz = m; PHYS.vz = 0; } else if (PHYS.sz < -m) { PHYS.sz = -m; PHYS.vz = 0; }
+
+        REFS.pendantPivot.rotation.x = PARAMS.PENDANT_TILT + PHYS.sx;
+        REFS.pendantPivot.rotation.z = PHYS.sz;
     }
 
     // ---------------------------------------------------------------------------
