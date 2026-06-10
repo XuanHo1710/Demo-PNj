@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no"
+    />
+    <meta name="theme-color" content="#0a0a0f" />
+    <title>PNJ · Necklace Try-On (WebAR.rocks)</title>
+
+    <!-- Three.js r136 (the version the WebAR.rocks helpers are built against) -->
+    <script src="libs/three/v136/build/three.js"></script>
+    <script src="libs/three/v136/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="libs/three/v136/examples/js/loaders/RGBELoader.js"></script>
+
+    <!-- Postprocessing (temporal anti-aliasing) — crisp metal/diamond edges -->
+    <script src="libs/three/v136/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="libs/three/v136/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="libs/three/v136/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="libs/three/v136/examples/js/shaders/CopyShader.js"></script>
+    <script src="libs/three/v136/examples/js/postprocessing/SSAARenderPass.js"></script>
+    <script src="libs/three/v136/examples/js/postprocessing/TAARenderPass.js"></script>
+
+    <!-- WebAR.rocks.face engine + Three helper + landmark stabilizer -->
+    <script src="dist/WebARRocksFace.js"></script>
+    <script src="helpers/WebARRocksFaceThreeHelper.js"></script>
+    <script src="helpers/landmarksStabilizers/OneEuroLMStabilizer.js"></script>
+
+    <!-- Our custom necklace geometry + UI -->
+    <script src="pnj-necklace.js"></script>
+
+    <style>
+      :root {
+        --bg: #0a0a0f;
+        --panel: rgba(16, 16, 22, 0.72);
+        --line: rgba(255, 255, 255, 0.1);
+        --gold: #d9b35c;
+        --text: #f3f3f5;
+        --muted: #a9a9b3;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        overflow: hidden;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+
+      /* Both canvases are stacked + horizontally mirrored for a natural selfie view */
+      #WebARRocksFaceCanvas,
+      #threeCanvas {
+        position: fixed;
+        top: 0;
+        left: 50%;
+        width: 100vw;
+        height: 100%;
+        max-width: 100vh;
+        transform: rotateY(180deg) translate(50%);
+      }
+      #WebARRocksFaceCanvas {
+        z-index: 0;
+      }
+      #threeCanvas {
+        z-index: 1;
+      }
+
+      /* Top bar: back + product info */
+      .pnj-topbar {
+        position: fixed;
+        z-index: 3;
+        top: 0;
+        left: 0;
+        right: 0;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 16px;
+        background: linear-gradient(
+          180deg,
+          rgba(0, 0, 0, 0.55),
+          rgba(0, 0, 0, 0)
+        );
+      }
+      .pnj-back {
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        text-decoration: none;
+        color: var(--text);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 8px 14px;
+        font-size: 14px;
+        backdrop-filter: blur(8px);
+      }
+      .pnj-brand {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.2;
+      }
+      .pnj-brand__mark {
+        font-weight: 700;
+        letter-spacing: 2px;
+        color: var(--gold);
+      }
+      .pnj-brand__name {
+        font-size: 13px;
+        color: var(--text);
+      }
+      .pnj-brand__price {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      /* Right-side action buttons */
+      .pnj-actions {
+        position: fixed;
+        z-index: 3;
+        right: 14px;
+        top: 50%;
+        transform: translateY(-50%);
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .pnj-actions button {
+        cursor: pointer;
+        width: 52px;
+        height: 52px;
+        border-radius: 50%;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--text);
+        font-size: 13px;
+        backdrop-filter: blur(8px);
+        transition:
+          transform 0.12s ease,
+          background 0.12s ease;
+      }
+      .pnj-actions button:active {
+        transform: scale(0.92);
+      }
+
+      /* Bottom catalog strip */
+      .pnj-catalog {
+        position: fixed;
+        z-index: 3;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        gap: 10px;
+        padding: 14px 16px calc(14px + env(safe-area-inset-bottom));
+        overflow-x: auto;
+        background: linear-gradient(0deg, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0));
+        -webkit-overflow-scrolling: touch;
+      }
+      .pnj-thumb {
+        flex: none;
+        width: 64px;
+        height: 64px;
+        padding: 4px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.06);
+        cursor: pointer;
+        transition:
+          border-color 0.12s ease,
+          transform 0.12s ease;
+      }
+      .pnj-thumb img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+      .pnj-thumb.is-active {
+        border-color: var(--gold);
+        transform: translateY(-4px);
+      }
+
+      /* Boot / loading overlay */
+      .pnj-boot {
+        position: fixed;
+        z-index: 5;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        background: var(--bg);
+        transition: opacity 0.4s ease;
+      }
+      .pnj-boot.is-hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+      .pnj-boot__spinner {
+        width: 42px;
+        height: 42px;
+        border: 3px solid rgba(255, 255, 255, 0.15);
+        border-top-color: var(--gold);
+        border-radius: 50%;
+        animation: pnjspin 0.9s linear infinite;
+      }
+      @keyframes pnjspin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .pnj-boot__text {
+        color: var(--muted);
+        font-size: 14px;
+        max-width: 80vw;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- WebAR.rocks draws the mirrored webcam video here -->
+    <canvas id="WebARRocksFaceCanvas"></canvas>
+    <!-- Three.js draws the necklace overlay here -->
+    <canvas id="threeCanvas"></canvas>
+
+    <div class="pnj-topbar">
+      <a class="pnj-back" href="/">‹ Quay lại</a>
+      <div class="pnj-brand">
+        <span class="pnj-brand__mark">PNJ</span>
+        <span class="pnj-brand__name" id="pnjName">Necklace Try-On</span>
+        <span class="pnj-brand__price" id="pnjPrice"></span>
+      </div>
+    </div>
+
+    <div class="pnj-actions">
+      <button id="pnjMetal" data-metal="white" title="Đổi màu kim loại">
+        ⚪ Trắng
+      </button>
+      <button id="pnjCapture" title="Chụp ảnh">📸</button>
+    </div>
+
+    <div class="pnj-catalog" id="pnjCatalog"></div>
+
+    <div class="pnj-boot" id="pnjBoot">
+      <div class="pnj-boot__spinner"></div>
+      <div class="pnj-boot__text">
+        Đang khởi động camera &amp; AI tracking cổ…
+      </div>
+    </div>
+  </body>
+</html>

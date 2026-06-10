@@ -34,10 +34,16 @@ const state = {
 
 const ui = setupUI({
   onMode: (mode) => {
+    // Necklace now uses the dedicated WebAR.rocks.face try-on (real 3D neck pose +
+    // hand-written chain drape). It runs as a self-contained page under /public.
+    if (mode === 'necklace') {
+      window.location.href = 'webar/necklace.html';
+      return;
+    }
     state.mode = mode;
     ui.renderCatalog(CATALOG[mode], state.design[mode].id);
     ui.setHint(...HINTS[mode]);
-    ui.setTryOnVisible(mode === 'necklace' && PERFECTCORP.enabled);
+    ui.setTryOnVisible(false);
   },
   onQuality: (q) => {
     state.quality = q;
