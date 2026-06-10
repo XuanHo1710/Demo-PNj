@@ -32,13 +32,13 @@
         CHAIN_THICK: 1.15,      // chain tube radius (mm). Keep thin for a delicate look.
         CHAIN_SEGMENTS: 320,    // tube length segments (smoothness of the drape)
         CHAIN_RADIAL: 10,       // tube radial segments (roundness)
-        FRONT_DRAPE: 26,        // extra downward sag at the front centre from the chain's weight (mm)
+        FRONT_DRAPE: 52,        // extra downward sag at the front centre from the chain's weight (mm)
         LOOP_SAMPLES: 170,      // points sampled around the neck for the curve
         // The raw neck-side points sit HIGH (near the jaw). These pull the sides + nape DOWN
         // toward the front level so the chain rests on the neck/collar and its two ends tuck
         // in low, instead of shooting up beside the jaw and floating ("giả chân").
-        SIDE_RAISE: 0.5,        // 0 = sides as low as the front (flat), 1 = up at the raw neck-top points
-        BACK_RAISE: 0.7,        // how high the nape rides (it's hidden by the occluder anyway)
+        SIDE_RAISE: 0.62,       // 0 = sides as low as the front (flat), 1 = up at the raw neck-top points
+        BACK_RAISE: 0.72,       // how high the nape rides (it's hidden by the occluder anyway)
 
         PENDANT_SIZE: 46,       // pendant width (mm); height follows the image aspect ratio
         PENDANT_GAP: 4,         // gap between the chain front point and the top of the pendant (mm)
@@ -66,28 +66,34 @@
         CHAIN_METALNESS: 1.0,
         CHAIN_ENVINTENSITY: 1.15,
 
-        // --- Soft-body chain (the "mềm như chất lỏng / gợn sóng" feel) ------------
-        // The chain is simulated as a VERLET ROPE: a ring of nodes with inertia that
-        // spring toward their rest shape, sag under gravity, and pass waves to their
-        // neighbours — so it ripples and sways like a real flexible necklace / a game
-        // cloth model, instead of being a rigid tube. Rebuilt into a tube each frame.
+        // --- Soft-body chain — moves only WHEN YOU MOVE, then settles ------------
+        // The chain holds its rest shape when you're still (no silly idle wobble) and only
+        // ripples/swings from real motion: the world-space inertia term below fires ONLY when
+        // the neck pose actually changes (move side-to-side, nod, lean), then the firm spring
+        // + strong damping bring it back to rest fast. Gravity is small (just a little weight
+        // feel + gentle lean-hang), so it never drifts on its own.
         SOFT_ENABLED: true,
-        SOFT_NODES: 30,         // simulation nodes around the loop (more = smoother wave, heavier)
-        SOFT_TUBE_SEGMENTS: 140,// tube length segments rebuilt each frame from the nodes
-        SOFT_GRAVITY: 520,      // world-down pull → sag + response when you tilt (liquid sag)
-        SOFT_STIFFNESS: 210,    // pull back toward the rest necklace shape (lower = more liquid/wobbly)
-        SOFT_NEIGHBOR: 95,      // wave coupling between neighbour nodes → ripples travel along the chain
-        SOFT_DAMPING: 0.9,      // velocity retention 0..1 (higher = ripples last longer / more fluid)
-        SOFT_PIN_STRENGTH: 8,   // how hard the back/sides are held to the neck (front stays free to ripple)
-        SOFT_MAX_DEV: 16,       // max a node may stray from rest (mm) → can never detach / explode
+        SOFT_NODES: 34,         // simulation nodes around the loop (more = smoother wave, heavier)
+        SOFT_TUBE_SEGMENTS: 150,// tube length segments rebuilt each frame from the nodes
+        SOFT_GRAVITY: 240,      // gentle weight + lean-hang only — LOW so it doesn't move on its own
+        SOFT_STIFFNESS: 66,     // firm pull back to the rest shape → holds still / settles fast
+        SOFT_NEIGHBOR: 55,      // wave coupling between neighbours → ripples travel along the chain
+        SOFT_DAMPING: 0.84,     // velocity retention 0..1 (LOW → motion dies fast, no constant wobble)
+        SOFT_PIN_STRENGTH: 10,  // how hard the back/sides are held to the neck (front stays free to ripple)
+        SOFT_MAX_DEV: 26,       // max a node may stray from rest (mm) → room to sag, never detaches
+        SOFT_MOTION_DEADZONE: 0.35, // ignore neck-pose jitter below this (mm/frame) so a still head = a still chain
+        // Only the FRONT arc swings; the sides + nape stay PINNED to the neck so the chain
+        // grips both sides and the back like a real necklace (cos(theta) above this = free).
+        // 1=only the very front free, 0=half the loop free. ~0.3 → front ~±72° drapes, rest hugs.
+        SOFT_FRONT_PIN: 0.3,
 
         // --- End fade — dissolve the two side ends into the neck ------------------
         // A depth-based alpha fade: chain vertices toward the BACK (lower local z) fade to
         // invisible, so where the chain curves behind the neck it vanishes smoothly instead
         // of ending in a hard floating tip ("giả chân"). Works with the depth occluder.
         FADE_ENABLED: true,
-        FADE_START_FRAC: 0.5,   // begin fading this far back (0 = front, 1 = back) — sides start to fade
-        FADE_END_FRAC: 0.82,    // fully invisible this far back → the ends disappear into the neck
+        FADE_START_FRAC: 0.6,  // begin fading this far back (0 = front, 1 = back) — only the nape fades
+        FADE_END_FRAC: 0.93,    // fully invisible this far back → the very ends disappear into the neck
 
         // Neck occluder — an invisible depth-only cylinder shaped to the neck. It HIDES the
         // chain where it wraps BEHIND the neck, so the two ends tuck behind it instead of
@@ -255,6 +261,8 @@
         // soft-body chain (verlet rope) state — preallocated, simulated each frame:
         softRest: null, softCur: null, softPrev: null, softFreedom: null, softCurve: null,
         softDown: null, softInvQuat: null,
+        // world matrices so the rope inertia is measured in WORLD space (→ it lags head motion):
+        softMatCur: null, softMatInv: null, softMatPrev: null, softMatT: null, softProbe: null, softInit: false,
         pendantPivot: null,   // Object3D at the bail point; physics rotates THIS (pendulum)
         pendantMesh: null,    // the product image plane, hung below the pivot
         pendantMat: null,
@@ -293,22 +301,54 @@
         };
     }
 
-    // Per-frame soft-body chain step (verlet rope). Each node has inertia, springs toward
-    // its rest shape (stiffer at the pinned back, free at the front), sags under gravity
-    // (in true world-down, so tilting your head makes it shift/ripple), and exchanges a
-    // wave with its neighbours. A deviation clamp guarantees it can never explode/detach.
-    function simulateChain(dt, invQuat) {
+    // Per-frame soft-body chain step (verlet rope) — runs in WORLD space so the rope has
+    // real inertia: each node remembers where it was in the WORLD last frame, so when your
+    // head/neck moves the nodes LAG behind and ripple (the "liquid / 3D model" motion). It
+    // also sags under true world-gravity, springs toward its rest shape (soft at the free
+    // front, stiff at the pinned back) and passes waves to its neighbours. A deviation clamp
+    // guarantees it can never explode/detach.
+    function simulateChain(dt) {
         const cur = REFS.softCur, prev = REFS.softPrev, rest = REFS.softRest, free = REFS.softFreedom;
-        if (!cur) return;
+        if (!cur || !REFS.necklaceGroup) return;
         const n = cur.length;
-        const down = REFS.softDown.set(0, -1, 0).applyQuaternion(invQuat); // world-down in chain-local space
+
+        // local(node) → world matrix for the chain (necklaceGroup space). onTrack runs after
+        // the engine's render so matrices are current; refresh once more to be safe.
+        REFS.necklaceGroup.updateWorldMatrix(true, false);
+        REFS.softMatCur.copy(REFS.necklaceGroup.matrixWorld);
+        REFS.softMatInv.copy(REFS.softMatCur).invert();
+
+        if (!REFS.softInit) { // first frame: seed prev = cur, no motion yet
+            REFS.softInit = true;
+            REFS.softMatPrev.copy(REFS.softMatCur);
+            for (let i = 0; i < n; i++) prev[i].copy(cur[i]);
+            return;
+        }
+
+        // T re-expresses last frame's LOCAL positions into THIS frame's local space *through
+        // world space*. If the head moved, a rigid point's old world spot now maps to a
+        // different local spot → (cur − prev) becomes the world velocity → inertia + lag.
+        const T = REFS.softMatT.multiplyMatrices(REFS.softMatInv, REFS.softMatPrev);
+
+        // MOTION DEADZONE — the chain should move only when YOU move, not jitter on its own.
+        // Probe how far this frame's pose actually moved a front-radius point; if it's below
+        // the deadzone (= tracking jitter while you hold still), treat the pose as UNCHANGED
+        // (skip the inertia re-projection) so a still head leaves the chain still.
+        const poseMove = REFS.softProbe.copy(rest[0]).applyMatrix4(T).distanceTo(rest[0]);
+        const poseMoved = poseMove >= PARAMS.SOFT_MOTION_DEADZONE;
+
+        // true world-down expressed in chain-local space (so lean/tilt makes it sag sideways):
+        const down = REFS.softDown.set(0, -1, 0).transformDirection(REFS.softMatInv);
+
         const g = PARAMS.SOFT_GRAVITY, ks = PARAMS.SOFT_STIFFNESS, kn = PARAMS.SOFT_NEIGHBOR;
         const damp = PARAMS.SOFT_DAMPING, pin = PARAMS.SOFT_PIN_STRENGTH, dev = PARAMS.SOFT_MAX_DEV;
         const h2 = dt * dt;
+
         for (let i = 0; i < n; i++) {
             const f = free[i];
             const ci = cur[i], pi = prev[i], ri = rest[i];
             if (f <= 0.02) { ci.copy(ri); pi.copy(ri); continue; } // hard-pinned to the neck
+            if (poseMoved) pi.applyMatrix4(T); // re-express last position in the current frame (inertia)
             const L = cur[(i - 1 + n) % n], R = cur[(i + 1) % n];
             const kRest = ks * (1 + (1 - f) * pin);
             const ax = (ri.x - ci.x) * kRest + down.x * g * f + kn * ((L.x + R.x) * 0.5 - ci.x);
@@ -317,7 +357,7 @@
             const vx = (ci.x - pi.x) * damp + ax * h2;
             const vy = (ci.y - pi.y) * damp + ay * h2;
             const vz = (ci.z - pi.z) * damp + az * h2;
-            pi.copy(ci);
+            pi.copy(ci); // store current as prev (in current local space) for next frame
             ci.x += vx; ci.y += vy; ci.z += vz;
             // clamp deviation from rest so a violent motion can never detach/explode the rope
             const dx = ci.x - ri.x, dy = ci.y - ri.y, dz = ci.z - ri.z;
@@ -327,6 +367,16 @@
                 ci.x = ri.x + dx * k; ci.y = ri.y + dy * k; ci.z = ri.z + dz * k;
             }
         }
+        REFS.softMatPrev.copy(REFS.softMatCur);
+
+        // Keep the pendant bail glued to the LIVE front node (node 0 = front-centre), so the
+        // charm always hangs from where the chain ACTUALLY is after it sags/ripples — not the
+        // static rest point (that mismatch was why the centre looked disconnected).
+        if (REFS.pendantPivot) {
+            const f0 = cur[0];
+            REFS.pendantPivot.position.set(f0.x, f0.y - PARAMS.PENDANT_GAP, f0.z + PARAMS.PENDANT_FWD);
+        }
+
         // rebuild the tube from the simulated nodes (the curve shares the softCur array)
         REFS.chainMesh.geometry.dispose();
         REFS.chainMesh.geometry = new THREE.TubeGeometry(
@@ -357,8 +407,9 @@
             rest.push(new THREE.Vector3(x, y, z));
             cur.push(new THREE.Vector3(x, y, z));
             prev.push(new THREE.Vector3(x, y, z));
-            // front (c→1) ripples freely; sides partial; back (c→−1) stays pinned to the neck
-            freedom.push(smoothstep01((c + 0.4) / 1.3));
+            // Only the FRONT arc (cosθ above SOFT_FRONT_PIN) is free to drape/ripple; the
+            // sides + nape stay pinned to the neck so the chain grips both sides and the back.
+            freedom.push(smoothstep01((c - PARAMS.SOFT_FRONT_PIN) / (1 - PARAMS.SOFT_FRONT_PIN)));
             if (z < zMin) zMin = z;
             if (z > zMax) zMax = z;
         }
@@ -502,6 +553,11 @@
         REFS.physScale = new THREE.Vector3();
         REFS.softDown = new THREE.Vector3();      // world-down transformed into chain-local space
         REFS.softInvQuat = new THREE.Quaternion(); // inverse neck rotation (for soft-body gravity)
+        REFS.softMatCur = new THREE.Matrix4();
+        REFS.softMatInv = new THREE.Matrix4();
+        REFS.softMatPrev = new THREE.Matrix4();
+        REFS.softMatT = new THREE.Matrix4();
+        REFS.softProbe = new THREE.Vector3();
 
         // nicer tone mapping (matches the WebAR.rocks mirror helper):
         REFS.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -653,8 +709,7 @@
 
         // --- 1) Soft-body chain ripple (the flexible "liquid" chain) -------------
         if (PARAMS.SOFT_ENABLED && REFS.softCur) {
-            REFS.softInvQuat.copy(REFS.physQuat).invert(); // world-down → chain-local for gravity
-            simulateChain(dt, REFS.softInvQuat);
+            simulateChain(dt); // runs in world space → real inertia / lag / ripple
         }
 
         // --- 2) Pendant pendulum swing -------------------------------------------
