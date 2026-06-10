@@ -8,6 +8,7 @@ import { OneEuroFilter } from '../../tracking/oneEuro.js';
 // by an invisible depth-only occluder, so it reads as a complete necklace and stays wrapped as
 // the head turns. Tracking is stabilised with a One Euro filter.
 const DEG = Math.PI / 180;
+const mix = (a, b, t) => a + (b - a) * t;
 
 export function createPendant() {
   const group = new THREE.Group();
@@ -45,6 +46,10 @@ export function createPendant() {
     x: new OneEuroFilter(fo),
     y: new OneEuroFilter(fo),
     r: new OneEuroFilter(frad),
+    lx: new OneEuroFilter(fo),
+    ly: new OneEuroFilter(fo),
+    rx: new OneEuroFilter(fo),
+    ry: new OneEuroFilter(fo),
     yaw: new OneEuroFilter(fr),
     roll: new OneEuroFilter(fr),
     pitch: new OneEuroFilter(fr)
@@ -52,7 +57,7 @@ export function createPendant() {
   const _photo = new THREE.Vector3();
 
   // center: world Vector3 (px) at the neck centre. size/radius/faceH: px. yaw/roll/pitch: radians.
-  function update(center, size, radius, yaw, roll, pitch, faceH) {
+  function update(center, size, radius, yaw, roll, pitch, faceH, neckLeft, neckRight) {
     const t = performance.now() / 1000;
     const Cx = filt.x.filter(center.x, t);
     const Cy = filt.y.filter(center.y, t);
@@ -60,6 +65,10 @@ export function createPendant() {
     const phi = filt.yaw.filter(yaw, t); // head yaw → ring rotation about the neck axis
     const rollS = filt.roll.filter(roll, t) * PENDANT.ROLL_GAIN; // damped so the ring doesn't sway
     const pitchS = filt.pitch.filter(pitch, t); // head up/down → opens/closes the ring
+    const Lx = neckLeft ? filt.lx.filter(neckLeft.x, t) : Cx - R;
+    const Ly = neckLeft ? filt.ly.filter(neckLeft.y, t) : Cy;
+    const Rx = neckRight ? filt.rx.filter(neckRight.x, t) : Cx + R;
+    const Ry = neckRight ? filt.ry.filter(neckRight.y, t) : Cy;
 
     const Rc = R * PENDANT.CHAIN_GAP; // chain rides just outside the neck surface
     const tilt = PENDANT.TILT_DEG * DEG + pitchS; // forward tilt + live head pitch
@@ -69,18 +78,27 @@ export function createPendant() {
     const cP = Math.cos(phi), sP = Math.sin(phi);
     const cR = Math.cos(rollS), sR = Math.sin(rollS);
 
-    // Sample a FULL circle around the neck's vertical axis, tilt it forward, yaw it with the
-    // head, then roll it into screen space. The pendant hangs from whichever point ends up most
-    // forward (largest z), so it always sits at the front-bottom by gravity.
+    // Sample a FULL loop around the neck's vertical axis, but deform it like a real chain:
+    // the side contact points ride higher on the neck, the front hangs as a catenary, and the
+    // hidden nape arc tightens instead of staying as a mathematically perfect ellipse.
     const N = 72;
     const pts = [];
     let frontZ = -Infinity, frontX = Cx, frontY = Cy;
     for (let i = 0; i < N; i++) {
       const alpha = (i / N) * Math.PI * 2;
-      const lx = Rc * Math.sin(alpha);
-      const lz = Rc * Math.cos(alpha); // +z = front (toward camera), -z = behind the neck
+      const side = Math.sin(alpha);
+      const depth = Math.cos(alpha); // +z = front (toward camera), -z = behind the neck
+      const frontLocal = Math.max(0, depth);
+      const backLocal = Math.max(0, -depth);
+      const sideLocal = Math.abs(side);
+      const widthK = 1 + (PENDANT.FRONT_WIDTH - 1) * frontLocal - (1 - PENDANT.BACK_WIDTH) * backLocal;
+      const lx = Rc * side * widthK;
+      const lz = Rc * depth;
       // forward tilt about X: front dips, nape rises
-      const ty = -lz * sT;
+      let ty = -lz * sT;
+      ty += faceH * PENDANT.SIDE_LIFT * Math.pow(sideLocal, PENDANT.SIDE_LIFT_POWER) * (1 - frontLocal * 0.35);
+      ty += faceH * PENDANT.NAPE_LIFT * Math.pow(backLocal, 0.85);
+      ty += faceH * PENDANT.YAW_DRAPE * Math.sin(phi) * side * (0.45 + frontLocal * 0.55);
       const tz = lz * cT;
       // yaw about Y: the ring turns with the neck
       const yx = lx * cP + tz * sP;
@@ -89,14 +107,25 @@ export function createPendant() {
       // roll about Z + translate into world px
       const sx = Cx + yx * cR - yy * sR;
       let sy = Cy + yx * sR + yy * cR;
+      let px = sx;
+      let pz = yz;
       // gravity: the forward-facing arc hangs down in a soft catenary (flexible real chain),
       // plus a small extra dip from the pendant's weight at the very front centre.
       const frontness = Math.max(0, yz / Rc);
-      sy -= drape * Math.pow(frontness, PENDANT.DRAPE_POWER);
+      const sideDrape = Math.max(0, Math.min(1, (frontness + PENDANT.SIDE_DRAPE) / (1 + PENDANT.SIDE_DRAPE)));
+      sy -= drape * Math.pow(sideDrape, PENDANT.DRAPE_POWER);
       sy -= frontSag * frontness * frontness;
+      const anchorW = PENDANT.ANCHOR_LOCK * Math.pow(sideLocal, 2.4) * (1 - frontLocal * 0.6) * (1 - backLocal * 0.25);
+      if (anchorW > 0) {
+        const targetX = side > 0 ? Rx : Lx;
+        const targetY = side > 0 ? Ry : Ly;
+        px = mix(px, targetX, anchorW);
+        sy = mix(sy, targetY, anchorW);
+        pz = mix(pz, R * PENDANT.SIDE_VISIBLE_Z, anchorW * 0.85);
+      }
       // The most forward point is where the pendant's bail sits (front centre of the chain).
-      if (yz > frontZ) { frontZ = yz; frontX = sx; frontY = sy; }
-      pts.push(new THREE.Vector3(sx, sy, yz));
+      if (pz > frontZ) { frontZ = pz; frontX = px; frontY = sy; }
+      pts.push(new THREE.Vector3(px, sy, pz));
     }
     const curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal'); // closed loop
     const tubeR = Math.max(1.0, R * PENDANT.CHAIN_THICK); // THIN chain (with a visibility floor)

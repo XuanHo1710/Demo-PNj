@@ -163,7 +163,7 @@ function frame() {
       // Shoulders anchor the chain to the body so it stays around the neck. Prefer YOLOv8-pose
       // (robust, less jitter); fall back to MediaPipe Pose; both pick the body under THIS face.
       let shoulders = null;
-      const y = yolo && yolo.detect(video, ts);
+      const y = yolo && yolo.detect(video, ts, noseN);
       if (y) {
         shoulders = {
           left: mapper(y.left),
@@ -198,7 +198,17 @@ function frame() {
         }
       }
       const p = pendantFromFace(lm, mapper, shoulders);
-      pendant.update(stage.toWorld(p.center, v[0]), p.size, p.radius, p.yaw, p.roll, p.pitch, p.faceH);
+      pendant.update(
+        stage.toWorld(p.center, v[0]),
+        p.size,
+        p.radius,
+        p.yaw,
+        p.roll,
+        p.pitch,
+        p.faceH,
+        stage.toWorld(p.neckLeft, v[1]),
+        stage.toWorld(p.neckRight, v[2])
+      );
       hideAll();
       pendant.group.visible = true;
       detected = true;

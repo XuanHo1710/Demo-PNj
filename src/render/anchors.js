@@ -139,10 +139,9 @@ export function pendantFromFace(landmarks, map, shoulders) {
       shoulders.left.y - shoulders.right.y,
       shoulders.left.x - shoulders.right.x
     );
-    // Reject a shoulder tilt that disagrees with the head by more than the trust window.
-    if (Math.abs(sRoll - roll) < PENDANT.ROLL_AGREE * DEG) {
-      roll = lerp(roll, sRoll, PENDANT.ROLL_SHOULDER);
-    }
+    // YOLO/pose shoulders describe the body plane, which is what a necklace rests on. Blend
+    // strongly toward them instead of letting a tilted face rotate the chain into a fake U shape.
+    roll = lerp(roll, sRoll, PENDANT.ROLL_SHOULDER);
   }
   // Hard clamp: a real necklace never tips far, and this guarantees the ring stays a wide,
   // neck-wrapping ellipse instead of rotating edge-on into a thin sliver.
@@ -182,8 +181,53 @@ export function pendantFromFace(landmarks, map, shoulders) {
     cy = lerp(chin.y, midY, PENDANT.DROP_TO_SHOULDER);
   }
 
+  // Side anchors come straight from the face model: each jaw corner (gonion) pushed DOWN along
+  // the face's own vertical axis onto the neck, and a touch outward. Because they ride real
+  // landmarks, each side independently reaches that person's neck (no more one short side) and the
+  // whole chain follows the head as it turns/tilts. They're blended with the symmetric geometric
+  // estimate so a momentary landmark glitch can't collapse a side.
+  let dnx = chin.x - top.x;
+  let dny = chin.y - top.y;
+  const dnl = Math.hypot(dnx, dny) || 1;
+  dnx /= dnl; // face "down" (forehead → chin) — rotates with head tilt
+  dny /= dnl;
+  const outX = dny; // face "right" axis (perpendicular to down)
+  const outY = -dnx;
+  const drop = faceHeight * PENDANT.ANCHOR_DROP;
+  const out = faceWidth * PENDANT.ANCHOR_OUT;
+  const jawAnchor = (j) => {
+    const s = j.x >= cx ? 1 : -1; // push away from the neck centreline
+    return { x: j.x + dnx * drop + outX * out * s, y: j.y + dny * drop + outY * out * s };
+  };
+  const ja = jawAnchor(jawR);
+  const jb = jawAnchor(jawL);
+  const jawLeft = ja.x <= jb.x ? ja : jb; // smaller screen x = left
+  const jawRight = ja.x <= jb.x ? jb : ja;
+
+  // Symmetric geometric fallback keeps a side from collapsing if a jaw point is briefly lost.
+  const screenRoll = -roll;
+  const ax = Math.cos(screenRoll);
+  const ay = Math.sin(screenRoll);
+  const ux = -ay;
+  const uy = -ax;
+  const anchorSpan = radius * PENDANT.ANCHOR_SPAN;
+  const anchorLift = faceHeight * PENDANT.ANCHOR_LIFT;
+  const geoLeft = { x: cx - ax * anchorSpan + ux * anchorLift, y: cy - ay * anchorSpan + uy * anchorLift };
+  const geoRight = { x: cx + ax * anchorSpan + ux * anchorLift, y: cy + ay * anchorSpan + uy * anchorLift };
+
+  // Resolve the two ends on two axes like a real chain: HEIGHT (and turn/tilt following) rides the
+  // jaw corners so each side reaches that person's neck, while WIDTH hugs the measured neck radius
+  // so the ends sit on the sides of the neck instead of flaring out to the (wider) jaw — this is
+  // what fixes the sideways "hook" at the top corners.
+  const ky = PENDANT.ANCHOR_FACE; // trust the jaw corners for vertical reach + rotation following
+  const kx = PENDANT.ANCHOR_FACE_X; // hug the neck width; only a little jaw influence so it follows yaw
+  const neckLeft = { x: lerp(geoLeft.x, jawLeft.x, kx), y: lerp(geoLeft.y, jawLeft.y, ky) };
+  const neckRight = { x: lerp(geoRight.x, jawRight.x, kx), y: lerp(geoRight.y, jawRight.y, ky) };
+
   return {
     center: { x: cx, y: cy }, // neck-cylinder centre (front low point of the drape)
+    neckLeft,
+    neckRight,
     size: faceWidth * PENDANT.SIZE, // pendant photo width (px)
     radius, // neck-cylinder radius (px), measured live per person
     yaw, // wrap rotation around the neck (rad)

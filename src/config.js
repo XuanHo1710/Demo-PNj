@@ -80,30 +80,51 @@ export const FACE = {
 // Sizes are relative to the face so they scale with distance. Tweak while framing the shot.
 export const PENDANT = {
   SIZE: 0.44, // pendant photo width as a fraction of face width
-  NECK_DROP: 0.3, // fallback neck-centre below the chin, in face-heights (no shoulders)
-  DROP_TO_SHOULDER: 0.4, // with shoulders: neck-centre placed this far from chin toward shoulders
+  NECK_DROP: 0.38, // fallback neck-centre below the chin, in face-heights (no shoulders)
+  DROP_TO_SHOULDER: 0.52, // with shoulders: neck-centre placed this far from chin toward shoulders
   // Real per-person neck width is measured LIVE from the jaw angle each frame (yaw-corrected),
   // so the curve fits each person instead of a fixed ratio. NECK_WIDTH scales that measurement;
   // RADIUS_MIN/MAX clamp it (as fractions of face width) against landmark glitches.
   NECK_WIDTH: 0.96, // neck radius = measured (yaw-corrected) half jaw-width × this (smaller = snugger)
-  RADIUS_EAR: 0.44, // stable neck-radius estimate from the ear span (fraction of face width)
+  RADIUS_EAR: 0.48, // stable neck-radius estimate from the ear span (fraction of face width)
   RADIUS_STABLE: 0.55, // blend live-jaw → stable-ear (0 = all jaw/jittery, 1 = all ear/rigid)
   // YOLO/pose shoulders give the most robust neck scale (they don't foreshorten when the head
   // turns), so blend a shoulder-span estimate into the radius for the correct ratio on turns.
   SHOULDER_RADIUS_K: 0.2, // neck radius ≈ shoulder span × this
-  SHOULDER_RADIUS_W: 0.4, // blend weight of the shoulder-based radius (0..1) — YOLO drives giãn nở
-  RADIUS_MIN: 0.3, // lower clamp on neck radius, as a fraction of face width
-  RADIUS_MAX: 0.5, // upper clamp on neck radius, as a fraction of face width
-  CHAIN_GAP: 1.02, // chain radius = neck radius * CHAIN_GAP (rides just outside the neck)
+  SHOULDER_RADIUS_W: 0.54, // blend weight of the shoulder-based radius (0..1) — YOLO drives giãn nở
+  RADIUS_MIN: 0.34, // lower clamp on neck radius, as a fraction of face width
+  RADIUS_MAX: 0.58, // upper clamp on neck radius, as a fraction of face width
+  CHAIN_GAP: 1.03, // chain radius = neck radius * CHAIN_GAP (rides just outside the neck)
   CHAIN_THICK: 0.015, // chain tube radius as a fraction of neck radius — keep SMALL (thin chain)
-  OCCLUDER_RADIUS: 0.9, // neck-occluder radius as a fraction of neck radius (hides only the nape)
+  OCCLUDER_RADIUS: 0.8, // neck-occluder radius as a fraction of neck radius (hides only the nape)
   OCCLUDER_PUSH: 0.3, // push the occluder back (× neck radius) so it never hides the FRONT chain
-  TILT_DEG: 22, // forward tilt of the necklace plane (more = drapes lower / “bè” at the front)
-  FRONT_SAG: 0.05, // subtle dip at the front centre from the pendant's weight, in face-heights
+  TILT_DEG: 26, // forward tilt of the necklace plane (more = drapes lower / “bè” at the front)
+  FRONT_SAG: 0.065, // subtle dip at the front centre from the pendant's weight, in face-heights
   // A real chain is FLEXIBLE: it sags in a soft catenary between the sides of the neck. DRAPE is
   // how deep the front hangs (face-heights); DRAPE_POWER shapes the curve (higher = sharper V).
-  DRAPE: 0.16,
-  DRAPE_POWER: 2.2,
+  DRAPE: 0.235,
+  DRAPE_POWER: 1.55,
+  SIDE_DRAPE: 0.11, // small side sag; low enough that the sides read as neck anchor points
+  SIDE_LIFT: 0.055, // raises the two neck-side supports so the front hangs like a real chain
+  SIDE_LIFT_POWER: 0.9, // higher = side lift stays local and avoids a visible hook
+  NAPE_LIFT: 0.1, // back of the chain rides upward around the nape before being occluded
+  FRONT_WIDTH: 1.03, // front arc opens slightly over the chest instead of staying circular
+  BACK_WIDTH: 0.86, // hidden nape arc is tighter around the back of the neck
+  YAW_DRAPE: 0.025, // head turn makes the two sides hang at slightly different heights
+  ANCHOR_SPAN: 0.94, // side lock points sit near the real left/right neck edges
+  ANCHOR_LIFT: 0.06, // side locks are above the front centre, like chain resting on the neck
+  ANCHOR_LOCK: 0.7, // stronger side lock keeps both visible sides long enough to reach the neck
+  SIDE_VISIBLE_Z: 0.26, // side anchors stay on the visible neck edge before the nape arc hides
+  // The two sides attach to the real jaw corners (gonion) from the face mesh, so each side
+  // independently rises to that person's neck and follows head turn/tilt. DROP pushes the anchor
+  // below the jaw onto the neck; OUT nudges it outward; FACE = trust in the landmark vs geometry.
+  ANCHOR_DROP: 0.1, // push each side anchor below the jaw corner onto the neck (face-heights)
+  ANCHOR_OUT: 0.0, // keep the side anchors on the neck width — no outward flare at the two top ends
+  // The two top ends are resolved on two axes, exactly like a real chain: their HEIGHT (and the
+  // way they rise/follow when the head turns or tilts) comes from the real jaw corners, while their
+  // WIDTH hugs the measured neck radius so the ends sit on the sides of the NECK, not out at the jaw.
+  ANCHOR_FACE: 0.8, // height/tilt blend → trust the jaw corners so each side rises to the neck and follows tilt
+  ANCHOR_FACE_X: 0.36, // width blend → mostly neck-width so the ends hug the neck (kills the sideways hook)
   // Head pitch (look up/down) opens/closes the ring. The neutral baseline self-calibrates per
   // person (PITCH_SMOOTH) so it measures the CHANGE in pitch, then it's gently clamped.
   PITCH_GAIN: 3.3,
@@ -112,13 +133,13 @@ export const PENDANT = {
   YAW_GAIN: 0.85, // how strongly a head turn rotates the ring around the neck
   YAW_MAX: 78, // clamp on the wrap rotation, in degrees
   YAW_SIGN: 1, // flip to -1 if the wrap rotates the wrong way for your camera mirroring
-  ROLL_GAIN: 0.8, // how much the neck-tilt rotates the necklace (a real chain drapes < full tilt)
-  ROLL_SHOULDER: 0.5, // blend ear-roll → shoulder-roll when they AGREE (0..1)
+  ROLL_GAIN: 0.28, // how much the neck-tilt rotates the necklace (a real chain drapes < full tilt)
+  ROLL_SHOULDER: 0.38, // shoulders help alignment but should not pull the chain into a slanted hook
   ROLL_AGREE: 22, // only trust shoulder tilt if within this many degrees of the head tilt
-  ROLL_MAX: 30, // hard clamp on necklace tilt (deg) so the ring can never rotate edge-on
+  ROLL_MAX: 10, // hard clamp on necklace tilt (deg) so the ring can never rotate edge-on
   FOLLOW: 0.15, // horizontal follow of the head turn (keep small so it stays centred)
-  SHOULDER_WEIGHT: 0.35, // blend toward the shoulder midpoint (0..1) — keeps it centred on the body
-  PHOTO_DROP: 0.32, // how far the pendant photo hangs below the chain front, in photo-widths
+  SHOULDER_WEIGHT: 0.46, // blend toward the shoulder midpoint (0..1) — keeps it centred on the body
+  PHOTO_DROP: 0.44, // how far the pendant photo hangs below the chain front, in photo-widths
   FILTER_MIN_CUTOFF: 1.3, // One Euro (position): lower = smoother at rest (more lag)
   FILTER_BETA: 0.04, // One Euro (position): higher = less lag on fast moves
   FILTER_RAD_CUTOFF: 0.5, // One Euro (radius): very low = rock-steady ring size (kills pulsing)
