@@ -49,8 +49,7 @@
         CHAIN_ENVINTENSITY: 1.15,
 
         // pose smoothing / constraints (proven values from the WebAR.rocks demo):
-        ROTATION_CONSTRAINTS: { order: 'YXZ', rotXFactor: 1, rotYFactor: 0.3, rotZFactor: 0.5 },
-        STABILIZER: { beta: 5, forceFilterNNInputPxRange: [8, 16] } // tuned for NN_NECKLACE_9
+        ROTATION_CONSTRAINTS: { order: 'YXZ', rotXFactor: 1, rotYFactor: 0.3, rotZFactor: 0.5 }
     };
 
     // Neck reference points in the RAW torso.blend space (identical to the values
@@ -66,7 +65,7 @@
         backUp: [-0.040026, -11.528961, -99.635696],
         backDown: [0.000007, -47.934677, -127.748184]
     };
-    // The subset WebAR.rocks actually feeds to solvePnP (must match main.js below).
+    // Every neck point WebAR.rocks can predict, in the torso.blend frame.
     const SOLVEPNP_OBJPOINTS = {
         torsoNeckCenterUp: NECK_RAW.centerUp,
         torsoNeckCenterDown: NECK_RAW.centerDown,
@@ -77,10 +76,61 @@
         torsoNeckBackUp: NECK_RAW.backUp,
         torsoNeckBackDown: NECK_RAW.backDown
     };
-    const SOLVEPNP_IMGPOINTS = [
+
+    // ---------------------------------------------------------------------------
+    // Multi-neural-net accuracy system — use ALL the vendored NN_NECKLACE nets.
+    //
+    // The nets fall into two families:
+    //   • NN_NECKLACE_1..4 predict 8 neck points (they ADD the lower left/right
+    //     neck points). More solvePnP correspondences = a more constrained, stable
+    //     pose — the lower points pin the vertical drop & scale, which is exactly
+    //     what a necklace needs.
+    //   • NN_NECKLACE_6..9 predict 6 points. NN_9 is the newest / best-balanced
+    //     (the official demo default); 7 & 8 are the heaviest (7 MB) = most detail.
+    //
+    // We feed solvePnP EXACTLY the points the active net provides, and we centre the
+    // necklace geometry by the SAME label set (WebAR.rocks centres objPoints by the
+    // mean of the used labels), so the overlay stays pixel-aligned for either family.
+    // ---------------------------------------------------------------------------
+    const IMGPOINTS_8 = [
+        'torsoNeckCenterUp', 'torsoNeckLeftUp', 'torsoNeckRightUp', 'torsoNeckBackUp',
+        'torsoNeckCenterDown', 'torsoNeckLeftDown', 'torsoNeckRightDown', 'torsoNeckBackDown'
+    ];
+    const IMGPOINTS_6 = [
         'torsoNeckCenterUp', 'torsoNeckLeftUp', 'torsoNeckRightUp',
         'torsoNeckBackUp', 'torsoNeckCenterDown', 'torsoNeckBackDown'
     ];
+
+    // `points` → which solvePnP set; `filter` → stabilizer forceFilterNNInputPxRange
+    // tuned per net (demo: NN_9 → [8,16], NN_8 → [4,12]); `label` → precision-button text.
+    const NN_REGISTRY = {
+        '9': { path: 'neuralNets/NN_NECKLACE_9.json', points: 6, filter: [8, 16], threshold: 0.7, label: 'Cân bằng' },
+        '8': { path: 'neuralNets/NN_NECKLACE_8.json', points: 6, filter: [4, 12], threshold: 0.7, label: 'Sắc nét' },
+        '7': { path: 'neuralNets/NN_NECKLACE_7.json', points: 6, filter: [4, 12], threshold: 0.7, label: 'Sắc nét+' },
+        '6': { path: 'neuralNets/NN_NECKLACE_6.json', points: 6, filter: [6, 14], threshold: 0.7, label: 'Nhẹ' },
+        '4': { path: 'neuralNets/NN_NECKLACE_4.json', points: 8, filter: [6, 14], threshold: 0.7, label: '8 điểm' },
+        '3': { path: 'neuralNets/NN_NECKLACE_3.json', points: 8, filter: [6, 14], threshold: 0.7, label: '8 điểm·3' },
+        '2': { path: 'neuralNets/NN_NECKLACE_2.json', points: 8, filter: [6, 14], threshold: 0.7, label: '8 điểm·2' },
+        '1': { path: 'neuralNets/NN_NECKLACE_1.json', points: 8, filter: [6, 14], threshold: 0.7, label: '8 điểm·1' }
+    };
+    // The precision button cycles this curated ladder: Fast → Balanced(default) → 8-point → Sharp.
+    const NN_LADDER = ['6', '9', '4', '8'];
+    const NN_DEFAULT = '9';
+
+    function resolveNNKey() {
+        // priority: ?nn=N url param (power testing) → saved choice → default
+        try {
+            const u = new URLSearchParams(location.search).get('nn');
+            if (u && NN_REGISTRY[u]) return u;
+            const s = localStorage.getItem('pnjNeckNN');
+            if (s && NN_REGISTRY[s]) return s;
+        } catch (e) { /* storage blocked */ }
+        return NN_DEFAULT;
+    }
+
+    let ACTIVE_NN_KEY = resolveNNKey();
+    // The solvePnP label set for the active net (drives both PnP and geometry centring).
+    let ACTIVE_IMGPOINTS = NN_REGISTRY[ACTIVE_NN_KEY].points === 8 ? IMGPOINTS_8 : IMGPOINTS_6;
 
     // ---------------------------------------------------------------------------
     // Derive the neck ellipse + draping Y profile from the (centred) reference pts.
@@ -88,7 +138,9 @@
     // same here and author the necklace in that centred frame → perfect alignment.
     // ---------------------------------------------------------------------------
     function buildNeckModel() {
-        const usedLabels = SOLVEPNP_IMGPOINTS;
+        // Centre by the SAME labels we feed to solvePnP so our origin matches the
+        // engine's centred objPoints exactly (6-point and 8-point nets centre differently).
+        const usedLabels = ACTIVE_IMGPOINTS;
         const mean = [0, 0, 0];
         usedLabels.forEach(function (label) {
             const p = SOLVEPNP_OBJPOINTS[label];
@@ -237,9 +289,20 @@
     // ---------------------------------------------------------------------------
     function onReady(err, sceneObjects) {
         if (err) {
+            // A heavy net (7 MB) can fail to load / OOM on a weak phone. Fall back to the
+            // proven default net ONCE (guarded so we never loop), then surface the error.
+            if (ACTIVE_NN_KEY !== NN_DEFAULT && !sessionStorage.getItem('pnjNNFellBack')) {
+                try {
+                    sessionStorage.setItem('pnjNNFellBack', '1');
+                    localStorage.setItem('pnjNeckNN', NN_DEFAULT);
+                } catch (e) { /* ignore */ }
+                location.reload();
+                return;
+            }
             showError('Tracking engine failed to start: ' + err);
             return;
         }
+        sessionStorage.removeItem('pnjNNFellBack'); // success → clear the one-shot guard
         REFS.scene = sceneObjects.threeScene;
         REFS.renderer = sceneObjects.threeRenderer;
         REFS.follower = sceneObjects.threeFaceFollowers[0];
@@ -337,17 +400,21 @@
     function startTracking() {
         REFS.helper = WebARRocksFaceThreeHelper;
         layoutCanvases(_videoAspect); // MUST run before init() so the engine adopts the resolution
+        const nn = NN_REGISTRY[ACTIVE_NN_KEY];
+        console.log('[PNJ necklace] using', nn.path, '(' + nn.points + ' points, ' + nn.label + ')');
         REFS.helper.init({
             spec: {
-                NNCPath: 'neuralNets/NN_NECKLACE_9.json',
-                scanSettings: { threshold: 0.7 },
+                NNCPath: nn.path,
+                scanSettings: { threshold: nn.threshold },
                 videoSettings: videoSettings()
             },
             canvas: document.getElementById('WebARRocksFaceCanvas'),
             canvasThree: document.getElementById('threeCanvas'),
             solvePnPObjPointsPositions: SOLVEPNP_OBJPOINTS,
-            solvePnPImgPointsLabels: SOLVEPNP_IMGPOINTS,
-            landmarksStabilizerSpec: PARAMS.STABILIZER,
+            // feed solvePnP every point the active net predicts → max pose constraints
+            solvePnPImgPointsLabels: ACTIVE_IMGPOINTS,
+            // per-net tuned landmark stabilizer (smoothness vs lag)
+            landmarksStabilizerSpec: { beta: 5, forceFilterNNInputPxRange: nn.filter },
             rotationContraints: PARAMS.ROTATION_CONSTRAINTS,
             // engine-side temporal anti-aliasing → crisp chain/diamond edges (same as the
             // WebAR.rocks VTONecklace demo). Needs the postprocessing scripts in the HTML.
@@ -422,6 +489,28 @@
     function wireControls() {
         const cap = document.getElementById('pnjCapture');
         if (cap) cap.addEventListener('click', captureImage);
+
+        // Precision selector — cycles the AI-model quality ladder so the user can pick
+        // the most accurate net for their device. Persists + reloads (changing the net
+        // re-centres solvePnP, so a clean reload is the robust way to apply it).
+        const prec = document.getElementById('pnjPrecision');
+        if (prec) {
+            const lbl = prec.querySelector('.pnj-prec__label');
+            if (lbl) lbl.textContent = NN_REGISTRY[ACTIVE_NN_KEY].label;
+            prec.addEventListener('click', function () {
+                let i = NN_LADDER.indexOf(ACTIVE_NN_KEY);
+                if (i === -1) i = NN_LADDER.indexOf(NN_DEFAULT);
+                const nextKey = NN_LADDER[(i + 1) % NN_LADDER.length];
+                try { localStorage.setItem('pnjNeckNN', nextKey); } catch (e) { /* ignore */ }
+                const boot = document.getElementById('pnjBoot');
+                if (boot) {
+                    boot.classList.remove('is-hidden');
+                    const t = boot.querySelector('.pnj-boot__text');
+                    if (t) t.textContent = 'Đang đổi mô hình AI: ' + NN_REGISTRY[nextKey].label + '…';
+                }
+                setTimeout(function () { location.reload(); }, 120);
+            });
+        }
 
         const metal = document.getElementById('pnjMetal');
         if (metal) metal.addEventListener('click', function () {

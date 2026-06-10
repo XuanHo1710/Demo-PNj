@@ -163,6 +163,27 @@
       .pnj-actions button:active {
         transform: scale(0.92);
       }
+      /* Precision selector shows an icon stacked over the active AI tier label */
+      .pnj-actions button.pnj-prec {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1px;
+        line-height: 1;
+      }
+      .pnj-prec__icon {
+        font-size: 16px;
+      }
+      .pnj-prec__label {
+        font-size: 8.5px;
+        letter-spacing: 0.2px;
+        color: var(--gold);
+        max-width: 48px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
 
       /* Bottom catalog strip */
       .pnj-catalog {
@@ -288,6 +309,15 @@
     </div>
 
     <div class="pnj-actions">
+      <button
+        id="pnjPrecision"
+        class="pnj-prec"
+        type="button"
+        title="Đổi mô hình AI (độ chính xác)"
+      >
+        <span class="pnj-prec__icon">🎯</span>
+        <span class="pnj-prec__label">Cân bằng</span>
+      </button>
       <button id="pnjMetal" data-metal="white" title="Đổi màu kim loại">
         ⚪ Trắng
       </button>
