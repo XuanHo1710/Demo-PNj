@@ -39,6 +39,10 @@
         PENDANT_GAP: 4,         // gap between the chain front point and the top of the pendant (mm)
         PENDANT_FWD: 6,         // push the pendant slightly forward of the chain so it never z-fights (mm)
         PENDANT_TILT: -0.12,    // small forward lean (rad) so the charm faces the camera a touch
+        // Gravity: when you LEAN, the chain rolls with your neck but a real pendant swings
+        // back toward vertical (it hangs). 0 = rigid (rolls fully with you), 1 = full
+        // gravity (always points straight down). Flip the sign if it swings the wrong way.
+        PENDANT_GRAVITY: 0.6,
 
         TAA_LEVEL: 3,           // engine temporal anti-aliasing samples (0 = off). Demo uses 3.
 
@@ -48,8 +52,13 @@
         CHAIN_METALNESS: 1.0,
         CHAIN_ENVINTENSITY: 1.15,
 
-        // pose smoothing / constraints (proven values from the WebAR.rocks demo):
-        ROTATION_CONSTRAINTS: { order: 'YXZ', rotXFactor: 1, rotYFactor: 0.3, rotZFactor: 0.5 }
+        // 3D pose FOLLOW — how much the necklace rotates with you on each axis. The
+        // WebAR.rocks demo damped these (yaw 0.3 / roll 0.5) for a rigid pendant model,
+        // but our necklace is a full 360° loop hidden behind a neck occluder, so we let it
+        // follow you closely for a real feel: lean → it leans, turn → the loop turns with you.
+        ROT_PITCH: 1.0,  // nod up/down   (X) — full
+        ROT_YAW: 0.7,    // turn L/R      (Y) — turns the 360° loop with the head/neck
+        ROT_ROLL: 1.0    // lean sideways (Z) — necklace leans with you (the main "nghiêng theo" fix)
     };
 
     // Neck reference points in the RAW torso.blend space (identical to the values
@@ -191,7 +200,9 @@
         pendantMesh: null,
         pendantMat: null,
         neck: null,           // result of buildNeckModel()
-        envMap: null
+        envMap: null,
+        gravQuat: null,       // reused each frame for the pendant gravity hang
+        gravEuler: null
     };
     const STATE = { product: null, catalog: [], booted: false };
     const texLoader = new THREE.TextureLoader();
@@ -306,6 +317,8 @@
         REFS.scene = sceneObjects.threeScene;
         REFS.renderer = sceneObjects.threeRenderer;
         REFS.follower = sceneObjects.threeFaceFollowers[0];
+        REFS.gravQuat = new THREE.Quaternion(); // reused each frame by onTrack (pendant gravity)
+        REFS.gravEuler = new THREE.Euler();
 
         // nicer tone mapping (matches the WebAR.rocks mirror helper):
         REFS.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -415,12 +428,33 @@
             solvePnPImgPointsLabels: ACTIVE_IMGPOINTS,
             // per-net tuned landmark stabilizer (smoothness vs lag)
             landmarksStabilizerSpec: { beta: 5, forceFilterNNInputPxRange: nn.filter },
-            rotationContraints: PARAMS.ROTATION_CONSTRAINTS,
+            // let the necklace follow your full 3D head/neck rotation (lean / turn / nod)
+            rotationContraints: {
+                order: 'YXZ',
+                rotXFactor: PARAMS.ROT_PITCH,
+                rotYFactor: PARAMS.ROT_YAW,
+                rotZFactor: PARAMS.ROT_ROLL
+            },
             // engine-side temporal anti-aliasing → crisp chain/diamond edges (same as the
             // WebAR.rocks VTONecklace demo). Needs the postprocessing scripts in the HTML.
             taaLevel: PARAMS.TAA_LEVEL,
-            callbackReady: onReady
+            callbackReady: onReady,
+            // per-frame hook → hang the pendant under gravity as you lean
+            callbackTrack: onTrack
         });
+    }
+
+    // Per-frame: the chain is fixed to your neck (it rolls fully with you), but a real
+    // pendant HANGS — so we counter a fraction of your lean on just the charm to keep it
+    // pointing toward the ground. The engine calls this after each pose update, when the
+    // follower's world matrix is current.
+    function onTrack() {
+        if (PARAMS.PENDANT_GRAVITY === 0 || !REFS.pendantMesh || !REFS.follower || !REFS.gravQuat) return;
+        const parent = REFS.follower.parent; // faceFollowerParent carries the neck pose rotation
+        if (!parent) return;
+        parent.getWorldQuaternion(REFS.gravQuat);
+        REFS.gravEuler.setFromQuaternion(REFS.gravQuat, 'ZYX'); // Z = roll (lean) extracted first
+        REFS.pendantMesh.rotation.z = -PARAMS.PENDANT_GRAVITY * REFS.gravEuler.z;
     }
 
     // ---------------------------------------------------------------------------
