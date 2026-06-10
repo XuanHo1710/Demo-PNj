@@ -278,12 +278,49 @@
         if (STATE.product) setProduct(STATE.product);
     }
 
+    // ---------------------------------------------------------------------------
+    // Canvas sizing. We drive the engine via the Three helper directly (not the
+    // Mirror wrapper), so WE must set the canvas pixel resolution — otherwise both
+    // canvases stay at the default 300×150 and get stretched to the phone screen
+    // (blurry video + squashed necklace). Match the CSS box: width = min(100vw,
+    // 100vh), height = 100%, scaled by a capped devicePixelRatio (cap keeps the
+    // per-frame GL video draw + 3D render fast on hi-DPI phones).
+    // ---------------------------------------------------------------------------
+    function computeDisplaySize() {
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const cssW = Math.min(window.innerWidth, window.innerHeight); // CSS: width:100vw; max-width:100vh
+        const cssH = window.innerHeight;                              // CSS: height:100%
+        return { w: Math.round(cssW * dpr), h: Math.round(cssH * dpr) };
+    }
+
+    function sizeCanvases() {
+        const s = computeDisplaySize();
+        const f = document.getElementById('WebARRocksFaceCanvas');
+        const t = document.getElementById('threeCanvas');
+        if (f) { f.width = s.w; f.height = s.h; }
+        if (t) { t.width = s.w; t.height = s.h; }
+        return s;
+    }
+
+    // Ask the camera for a frame whose orientation matches the screen, so a portrait
+    // phone gets a portrait frame (much less crop than the default 800×600 landscape).
+    // These are "ideal" hints within the engine's [480,1920] bounds — if a device
+    // can't honour them it just returns its closest frame and the cover-crop still works.
+    function pickVideoSettings() {
+        const portrait = window.innerHeight >= window.innerWidth;
+        return portrait
+            ? { facingMode: 'user', idealWidth: 720, idealHeight: 1280 }
+            : { facingMode: 'user', idealWidth: 1280, idealHeight: 720 };
+    }
+
     function startTracking() {
         REFS.helper = WebARRocksFaceThreeHelper;
+        sizeCanvases(); // MUST run before init() so the engine adopts the right resolution
         REFS.helper.init({
             spec: {
                 NNCPath: 'neuralNets/NN_NECKLACE_9.json',
-                scanSettings: { threshold: 0.7 }
+                scanSettings: { threshold: 0.7 },
+                videoSettings: pickVideoSettings()
             },
             canvas: document.getElementById('WebARRocksFaceCanvas'),
             canvasThree: document.getElementById('threeCanvas'),
@@ -374,12 +411,15 @@
         });
 
         const resize = function () {
-            const dpr = window.devicePixelRatio || 1;
-            const w = Math.min(window.innerWidth, window.innerHeight);
-            if (REFS.helper && STATE.booted) REFS.helper.resize(w * dpr, window.innerHeight * dpr);
+            if (!REFS.helper || !STATE.booted) return;
+            const s = computeDisplaySize();
+            // helper.resize() sets both canvas buffers, recomputes the camera FoV/aspect
+            // and the composer size, so the necklace stays aligned after a rotate.
+            REFS.helper.resize(s.w, s.h);
         };
         window.addEventListener('resize', resize);
-        window.addEventListener('orientationchange', resize);
+        // innerHeight updates a beat AFTER orientationchange on some mobile browsers.
+        window.addEventListener('orientationchange', function () { setTimeout(resize, 300); });
     }
 
     function loadCatalog() {

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
     <meta name="theme-color" content="#0a0a0f" />
     <title>PNJ · Necklace Try-On (WebAR.rocks)</title>
@@ -83,12 +83,19 @@
         display: flex;
         align-items: center;
         gap: 12px;
-        padding: 14px 16px;
+        padding: calc(12px + env(safe-area-inset-top))
+          calc(16px + env(safe-area-inset-right)) 12px
+          calc(16px + env(safe-area-inset-left));
         background: linear-gradient(
           180deg,
-          rgba(0, 0, 0, 0.55),
+          rgba(0, 0, 0, 0.6),
           rgba(0, 0, 0, 0)
         );
+        /* only the buttons/text should catch touches, not the whole gradient strip */
+        pointer-events: none;
+      }
+      .pnj-topbar > * {
+        pointer-events: auto;
       }
       .pnj-back {
         flex: none;
@@ -108,6 +115,7 @@
         display: flex;
         flex-direction: column;
         line-height: 1.2;
+        min-width: 0;
       }
       .pnj-brand__mark {
         font-weight: 700;
@@ -117,6 +125,10 @@
       .pnj-brand__name {
         font-size: 13px;
         color: var(--text);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 60vw;
       }
       .pnj-brand__price {
         font-size: 12px;
@@ -127,7 +139,7 @@
       .pnj-actions {
         position: fixed;
         z-index: 3;
-        right: 14px;
+        right: calc(12px + env(safe-area-inset-right));
         top: 50%;
         transform: translateY(-50%);
         display: flex;
@@ -161,7 +173,9 @@
         bottom: 0;
         display: flex;
         gap: 10px;
-        padding: 14px 16px calc(14px + env(safe-area-inset-bottom));
+        padding: 14px calc(16px + env(safe-area-inset-right))
+          calc(14px + env(safe-area-inset-bottom))
+          calc(16px + env(safe-area-inset-left));
         overflow-x: auto;
         background: linear-gradient(0deg, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0));
         -webkit-overflow-scrolling: touch;
@@ -224,6 +238,37 @@
         font-size: 14px;
         max-width: 80vw;
         text-align: center;
+      }
+
+      /* Tighten controls on small / narrow phones so nothing overlaps */
+      @media (max-width: 380px) {
+        .pnj-actions button {
+          width: 46px;
+          height: 46px;
+          font-size: 12px;
+        }
+        .pnj-thumb {
+          width: 56px;
+          height: 56px;
+        }
+        .pnj-brand__name {
+          max-width: 52vw;
+        }
+        .pnj-back {
+          padding: 7px 12px;
+          font-size: 13px;
+        }
+      }
+      /* Landscape phones: shorter UI so the catalog doesn't eat the view */
+      @media (max-height: 480px) {
+        .pnj-thumb {
+          width: 48px;
+          height: 48px;
+        }
+        .pnj-catalog {
+          gap: 8px;
+          padding-top: 8px;
+        }
       }
     </style>
   </head>
