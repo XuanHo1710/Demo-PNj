@@ -2,14 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
     <meta name="theme-color" content="#0a0a0f" />
     <title>PNJ · Virtual Try-On Demo</title>
     <link rel="stylesheet" href="/src/ui/style.css" />
   </head>
   <body>
     <!-- Hidden SVG for beauty filters (soft glow/skin smoothing) -->
-    <svg style="display: none;" width="0" height="0">
+    <svg style="display: none" width="0" height="0">
       <filter id="beauty-glow">
         <feGaussianBlur stdDeviation="2.5" result="blur" />
         <feComponentTransfer in="blur" result="glow">
@@ -49,12 +52,41 @@
         </div>
         <div class="seg" id="quality-seg">
           <button class="seg__btn" data-quality="fast">Fast (Web AR)</button>
-          <button class="seg__btn is-active" data-quality="premium">Premium (PBR)</button>
+          <button class="seg__btn is-active" data-quality="premium">
+            Premium (PBR)
+          </button>
         </div>
       </div>
 
       <!-- Catalog strip -->
       <div class="catalog" id="catalog"></div>
+
+      <!-- Perfect Corp snapshot try-on: shown only in necklace mode -->
+      <button id="tryon-fab" class="tryon-fab is-hidden" type="button">
+        <span class="tryon-fab__icon">✨</span>
+        <span class="tryon-fab__label">Thử thật</span>
+      </button>
+
+      <!-- Perfect Corp loading / result / error modal -->
+      <div
+        id="pc-modal"
+        class="pc-modal is-hidden"
+        role="dialog"
+        aria-modal="true"
+      >
+        <div class="pc-modal__backdrop" data-close></div>
+        <div class="pc-modal__card">
+          <button
+            class="pc-modal__x"
+            type="button"
+            data-close
+            aria-label="Đóng"
+          >
+            ✕
+          </button>
+          <div class="pc-modal__body" id="pc-modal-body"></div>
+        </div>
+      </div>
 
       <!-- Boot / loading screen -->
       <div id="boot" class="boot">

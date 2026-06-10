@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CAMERA, POSE, YOLO } from './config.js';
+import { CAMERA, POSE, PERFECTCORP } from './config.js';
 import { createStage } from './render/scene.js';
 import { createRing } from './render/jewelry/ring.js';
 import { createEarring } from './render/jewelry/earring.js';
@@ -8,7 +8,7 @@ import { makeMapper, ringFromHand, earsFromFace, pendantFromFace } from './rende
 import { createHandTracker } from './tracking/handTracker.js';
 import { createFaceTracker } from './tracking/faceTracker.js';
 import { createPoseTracker } from './tracking/poseTracker.js';
-import { createYoloPose } from './tracking/yoloPose.js';
+import { createPerfectCorpClient } from './perfectcorp.js';
 import { setupUI } from './ui/overlay.js';
 import ringData from './catalog/ring.json';
 import earringData from './catalog/earring.json';
@@ -37,6 +37,7 @@ const ui = setupUI({
     state.mode = mode;
     ui.renderCatalog(CATALOG[mode], state.design[mode].id);
     ui.setHint(...HINTS[mode]);
+    ui.setTryOnVisible(mode === 'necklace' && PERFECTCORP.enabled);
   },
   onQuality: (q) => {
     state.quality = q;
@@ -45,7 +46,8 @@ const ui = setupUI({
   onSelect: (item) => {
     state.design[state.mode] = item;
     applyTexture(state.mode);
-  }
+  },
+  onTryOn: () => runPerfectCorpTryOn()
 });
 
 // --- Three.js stage + jewelry (all real-photo overlays) ---
@@ -96,6 +98,69 @@ function applyTexture(mode) {
 Object.values(CATALOG).flat().forEach((p) => getTexture(p.image)); // warm cache for instant swaps
 ui.renderCatalog(CATALOG.ring, state.design.ring.id);
 
+// --- Perfect Corp necklace try-on (snapshot → photoreal) ---
+// The live MediaPipe overlay stays on for framing; this button sends the CURRENT webcam frame +
+// the chosen necklace photo to Perfect Corp's cloud (AI neck/clavicle tracking + PBR relighting)
+// and shows ONE photoreal result a few seconds later. Embedded keys = demo only (see config.js).
+const pcClient = PERFECTCORP.enabled ? createPerfectCorpClient(PERFECTCORP) : null;
+let tryOnBusy = false;
+
+function captureSelfieBlob() {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  const c = document.createElement('canvas');
+  c.width = vw;
+  c.height = vh;
+  const ctx = c.getContext('2d');
+  // Mirror so the saved selfie matches the on-screen (CSS-mirrored) preview the user sees.
+  ctx.translate(vw, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(video, 0, 0, vw, vh);
+  return new Promise((resolve, reject) =>
+    c.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error('Không chụp được khung hình từ camera.'))),
+      'image/jpeg',
+      PERFECTCORP.jpegQuality
+    )
+  );
+}
+
+async function fetchImageBlob(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Không tải được ảnh sản phẩm.');
+  return res.blob();
+}
+
+async function runPerfectCorpTryOn() {
+  if (!pcClient || tryOnBusy) return;
+  if (!(video.readyState >= 2 && video.videoWidth > 0)) {
+    ui.showTryOnError('Camera chưa sẵn sàng. Đợi một chút rồi thử lại.');
+    return;
+  }
+  tryOnBusy = true;
+  ui.setTryOnBusy(true);
+  const item = state.design.necklace;
+  let beforeUrl = null;
+  try {
+    const selfie = await captureSelfieBlob();
+    beforeUrl = URL.createObjectURL(selfie); // local preview for the before/after slider
+    ui.showTryOnLoading({ text: 'Đang tạo ảnh thật với Perfect Corp…', beforeUrl });
+    const ref = await fetchImageBlob(item.image);
+    const resultUrl = await pcClient.tryOnNecklace(selfie, ref, {
+      selfieName: 'selfie.jpg',
+      refName: `${item.sku || 'necklace'}.png`
+    });
+    ui.showTryOnResult({ imageUrl: resultUrl, beforeUrl, name: item.name, price: item.price });
+  } catch (err) {
+    if (beforeUrl) URL.revokeObjectURL(beforeUrl);
+    console.error('Perfect Corp try-on failed:', err);
+    ui.showTryOnError(err && err.message ? err.message : 'Có lỗi xảy ra. Vui lòng thử lại.');
+  } finally {
+    tryOnBusy = false;
+    ui.setTryOnBusy(false);
+  }
+}
+
 // --- Camera ---
 async function startCamera() {
   const open = (video) => navigator.mediaDevices.getUserMedia({ audio: false, video });
@@ -129,7 +194,6 @@ const v = Array.from({ length: 4 }, () => new THREE.Vector3());
 let hand = null;
 let face = null;
 let pose = null;
-let yolo = null;
 
 function frame() {
   const ts = performance.now();
@@ -159,19 +223,11 @@ function frame() {
   } else if (ready && state.mode === 'necklace' && face) {
     const lm = face.detect(video, ts);
     if (lm) {
-      const noseN = lm[4]; // face nose in normalized image space (matches pose/YOLO coords)
-      // Shoulders anchor the chain to the body so it stays around the neck. Prefer YOLOv8-pose
-      // (robust, less jitter); fall back to MediaPipe Pose; both pick the body under THIS face.
+      const noseN = lm[4]; // face nose in normalized image space (matches pose coords)
+      // Shoulders anchor the chain to the body so it stays around the neck. MediaPipe Pose
+      // (best-effort) picks the body under THIS face; if absent, the necklace is face-only.
       let shoulders = null;
-      const y = yolo && yolo.detect(video, ts, noseN);
-      if (y) {
-        shoulders = {
-          left: mapper(y.left),
-          right: mapper(y.right),
-          visL: y.visL,
-          visR: y.visR
-        };
-      } else if (pose) {
+      if (pose) {
         const poses = pose.detect(video, ts);
         if (poses && poses.length) {
           let best = poses[0];
@@ -234,14 +290,6 @@ async function boot() {
       pose = await createPoseTracker();
     } catch (err) {
       console.warn('Pose model unavailable; necklace will use face landmarks only.', err);
-    }
-    // YOLOv8-pose is also best-effort and fully optional (needs public/models + onnxruntime-web).
-    if (YOLO.enabled) {
-      try {
-        yolo = await createYoloPose();
-      } catch (err) {
-        console.warn('YOLO pose unavailable; necklace will use MediaPipe Pose instead.', err);
-      }
     }
     ui.bootDone();
     requestAnimationFrame(frame);

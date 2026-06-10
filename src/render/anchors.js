@@ -204,11 +204,16 @@ export function pendantFromFace(landmarks, map, shoulders) {
   const jawLeft = ja.x <= jb.x ? ja : jb; // smaller screen x = left
   const jawRight = ja.x <= jb.x ? jb : ja;
 
-  // Symmetric geometric fallback keeps a side from collapsing if a jaw point is briefly lost.
+  // Symmetric geometric base: the two ends sit at ±span along the body's RIGHT axis and rise by
+  // `lift` along the body's UP axis, so they're mirror-symmetric about the neck centreline and the
+  // necklace matches the neck instead of skewing to one side when the head turns/tilts.
   const screenRoll = -roll;
-  const ax = Math.cos(screenRoll);
+  const ax = Math.cos(screenRoll); // body "right" (along the ear line), screen space
   const ay = Math.sin(screenRoll);
-  const ux = -ay;
+  // body "up" = right rotated +90°. Must be the true perpendicular (ay, -ax); the old (-ay, -ax)
+  // was NOT perpendicular when the head was tilted, which pushed the lift sideways and skewed the
+  // two ends apart — the "lệch khi nghiêng" bug. At roll 0 both give (0,-1); they only differ on a tilt.
+  const ux = ay;
   const uy = -ax;
   const anchorSpan = radius * PENDANT.ANCHOR_SPAN;
   const anchorLift = faceHeight * PENDANT.ANCHOR_LIFT;

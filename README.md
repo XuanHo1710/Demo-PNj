@@ -36,12 +36,22 @@ Production bundle: `npm run build` → static files in `dist/` (drop on any stat
   drop-shadow that grounds the piece on the skin. (See "Two options" for the full roadmap.)
 - **Catalog** (bottom): every chip shows the real PNJ product photo, name and **VND price** —
   tap to swap live. The "this is real inventory" beat.
+- **✨ Thử thật (Perfect Corp)** — in **Necklace** mode a gold button appears: tap it to capture
+  the current frame and send it (with the selected necklace) to **Perfect Corp's AI Necklace
+  Virtual Try-On** for a **photoreal** still (AI neck/clavicle tracking + PBR relighting). The
+  live MediaPipe overlay is for framing; this is the "xịn" cloud snapshot, shown in a popup with a
+  **Tải ảnh** (download) button. Keys live in [`src/config.js`](src/config.js) (`PERFECTCORP`).
+
+> ⚠️ The Perfect Corp `apiKey` + `secretKey` are embedded in the frontend so the demo runs with no
+> backend — anyone who opens the page can read them. **Rotate them after the demo** and move them
+> behind a server proxy before any public deployment.
 
 **Shot list (matches the pitch storyboard):**
+
 1. `0–3s` Ring mode → raise hand (palm toward you, fingers up), rotate slightly.
 2. `3–7s` Earrings mode → face camera, slight head turn.
 3. `7–11s` Necklace mode → tap two different catalog chips → instant design swap.
-4. `11–15s` End card: *"Ướm thử trang sức PNJ ngay tại nhà"* + PNJ logo.
+4. `11–15s` End card: _"Ướm thử trang sức PNJ ngay tại nhà"_ + PNJ logo.
 
 Placement constants live in [`src/config.js`](src/config.js) — nudge `RING_SIZE`/`BAND_ALONG`
 (ring), `EARLOBE_DROP`/`EARRING_SIZE`/`EARRING_CROP` (earrings), and `PENDANT.DROP`/`SIZE`
@@ -51,18 +61,18 @@ Placement constants live in [`src/config.js`](src/config.js) — nudge `RING_SIZ
 
 ## The two options, in one app
 
-This web demo *is* **Option 1 (Web AR)**: real PNJ photos composited onto the body in-browser,
+This web demo _is_ **Option 1 (Web AR)**: real PNJ photos composited onto the body in-browser,
 no install — fast and cheap to ship. The `Fast ↔ Premium` toggle previews the polish jump
 (flat composite → grounded with a contact shadow). **Option 2 (premium / native)** is the
 priced production build below: PNJ's own hi-res / 3D assets, native ARKit/ARCore tracking with
 depth occlusion, and true PBR sparkle.
 
-| | **Option 1 — this Web AR demo** | **Option 2 — native production** |
-|---|---|---|
-| Assets | crawled product photos (2.5D) | PNJ hi-res / glTF 3D models |
-| Tracking | MediaPipe, markerless | ARKit/ARCore + depth occlusion |
-| Realism | real pieces, flat composite | photoreal, sized, occluded |
-| Cost / speed | low, instant link | higher, app build |
+|              | **Option 1 — this Web AR demo** | **Option 2 — native production** |
+| ------------ | ------------------------------- | -------------------------------- |
+| Assets       | crawled product photos (2.5D)   | PNJ hi-res / glTF 3D models      |
+| Tracking     | MediaPipe, markerless           | ARKit/ARCore + depth occlusion   |
+| Realism      | real pieces, flat composite     | photoreal, sized, occluded       |
+| Cost / speed | low, instant link               | higher, app build                |
 
 ---
 
@@ -119,8 +129,8 @@ transparent canvas over the video
 The demo is the teaser. The shippable product adds:
 
 1. **Real PNJ assets** — swap procedural geometry for glTF/USDZ exported from PNJ's product 3D
-   pipeline (`createRing`/`createEarring` already isolate geometry from placement). *Biggest
-   dependency — see below.*
+   pipeline (`createRing`/`createEarring` already isolate geometry from placement). _Biggest
+   dependency — see below._
 2. **Native AR for best tracking & realism** — ARKit (iOS) / ARCore (Android) or Unity AR
    Foundation; depth-based **occlusion** (fingers in front of the band, hair over earrings) and
    true **finger-size measurement** for purchase intent.

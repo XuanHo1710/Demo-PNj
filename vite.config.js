@@ -9,5 +9,5 @@ export default defineConfig({
   plugins: [basicSsl()],
   server: { host: true },
   // tasks-vision ships its own wasm loader; let it resolve at runtime instead of pre-bundling.
-  optimizeDeps: { exclude: ['@mediapipe/tasks-vision', 'onnxruntime-web'] }
+  optimizeDeps: { exclude: ['@mediapipe/tasks-vision'] }
 });

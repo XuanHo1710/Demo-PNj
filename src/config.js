@@ -19,24 +19,38 @@ export const POSE = {
   MIN_VIS: 0.5 // ignore shoulders below this visibility (e.g. cropped out of frame)
 };
 
-// YOLOv8-pose (ONNX, runs in-browser via onnxruntime-web). Optional, fail-safe: it gives a
-// second, robust read of the shoulders that we FUSE with MediaPipe to cut jitter and improve
-// accuracy. If the model or runtime is missing it's silently skipped and the necklace falls
-// back to MediaPipe Pose. Throttled (intervalMs) so it never tanks mobile FPS.
-export const YOLO = {
+// Perfect Corp — AI Necklace Virtual Try-On (S2S AI API). Unlike the on-device MediaPipe overlay
+// (live, every frame), this is a SNAPSHOT pipeline: we upload the current selfie + the chosen
+// necklace photo, the cloud engine does AI neck/clavicle tracking + PBR relighting, and returns
+// ONE photoreal image a few seconds later. Used by the “✨ Thử thật” button in necklace mode.
+//
+// ⚠️ DEMO ONLY: the apiKey + secretKey are embedded in the frontend so the demo runs with no
+// backend. Anyone who opens this page can read them and spend your credits — rotate these keys
+// after the demo and move them behind a server proxy before any public deployment.
+export const PERFECTCORP = {
   enabled: true,
-  // Place a YOLOv8(n)-pose ONNX export here (input 640×640). Drop the file at
-  // `public/models/yolov8n-pose.onnx`; export with: `yolo export model=yolov8n-pose.pt format=onnx imgsz=640`.
-  modelPath: '/models/yolov8n-pose.onnx',
-  // onnxruntime-web wasm binaries (version MUST match onnxruntime-web in package.json).
-  wasmPaths: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0/dist/',
-  inputSize: 640, // model input is square inputSize×inputSize (letterboxed)
-  scoreThreshold: 0.45, // min person confidence to accept a detection
-  minKpScore: 0.5, // min per-keypoint confidence to trust a shoulder
-  intervalMs: 120, // min gap between inferences (≈8 Hz) — protects FPS; smoothing covers the rest
-  // COCO-17 keypoint indices (YOLO pose order).
-  L_SHOULDER: 5, // person's left shoulder
-  R_SHOULDER: 6 //  person's right shoulder
+  apiKey: 'sk-V4RLReOuHEYr5pkYMs3ezeGwDI0uKDnwI1_lK50pXgKZZtHFKE7lp0RZ8NUuSC0-',
+  // RSA public key (DER, base64) used to sign the short-lived S2S auth id_token.
+  secretKey:
+    'MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCuzo1BBcLw9usY+anyTXYRZxXTKs/IeOksjUXbnKxP1tElCjK2omZiLqYjSlONVIlxM+K5y+zJnKqr8R8yRsxX4ZyViTFrqwGEKRiMviD7d0bA7FQlrePyiOXSUoHkhehv8sonx5wrfYCOXxkZfZ2bE7XqshvJx8Xi8bgfMeKBhQIDAQAB',
+  apiBase: 'https://yce-api-01.makeupar.com',
+  authPath: '/s2s/v1.0/client/auth', // S2S client auth → short-lived access_token
+  filePath: '/s2s/v2.0/file/2d-vto/necklace', // File API → presigned upload URL + file_id
+  taskPath: '/s2s/v2.0/task/2d-vto/necklace', // create task (POST) + poll status (GET /{task_id})
+  // How to authenticate: 'apikey' sends the sk- key directly as the Bearer token (what the
+  // necklace endpoint doc shows); 's2s' RSA-signs it for a short-lived access_token; 'auto'
+  // (recommended) tries the direct key and falls back to S2S automatically on a 401.
+  authMode: 'auto',
+  // Necklace render tuning (see API docs).
+  shadowIntensity: 0.15, // 0..1 drop-shadow strength under the chain (0.15 = subtle, the default)
+  ambientLight: 1.0, // 0..1 how strongly the result matches the selfie's own lighting
+  // PNJ product images are already transparent PNG cutouts, so the engine has no background to
+  // strip (the API playground uses false for cutouts too). Set true only for photos with a bg.
+  removeBackground: false,
+  // Async task polling.
+  pollIntervalMs: 1500, // gap between status checks while the cloud renders
+  pollTimeoutMs: 90000, // give up after this long and show a retry message
+  jpegQuality: 0.92 // selfie JPEG quality when capturing the webcam frame
 };
 
 export const CAMERA = {
@@ -88,10 +102,10 @@ export const PENDANT = {
   NECK_WIDTH: 0.96, // neck radius = measured (yaw-corrected) half jaw-width × this (smaller = snugger)
   RADIUS_EAR: 0.48, // stable neck-radius estimate from the ear span (fraction of face width)
   RADIUS_STABLE: 0.55, // blend live-jaw → stable-ear (0 = all jaw/jittery, 1 = all ear/rigid)
-  // YOLO/pose shoulders give the most robust neck scale (they don't foreshorten when the head
+  // Pose shoulders give the most robust neck scale (they don't foreshorten when the head
   // turns), so blend a shoulder-span estimate into the radius for the correct ratio on turns.
   SHOULDER_RADIUS_K: 0.2, // neck radius ≈ shoulder span × this
-  SHOULDER_RADIUS_W: 0.54, // blend weight of the shoulder-based radius (0..1) — YOLO drives giãn nở
+  SHOULDER_RADIUS_W: 0.54, // blend weight of the shoulder-based radius (0..1) — pose drives giãn nở
   RADIUS_MIN: 0.34, // lower clamp on neck radius, as a fraction of face width
   RADIUS_MAX: 0.58, // upper clamp on neck radius, as a fraction of face width
   CHAIN_GAP: 1.03, // chain radius = neck radius * CHAIN_GAP (rides just outside the neck)
