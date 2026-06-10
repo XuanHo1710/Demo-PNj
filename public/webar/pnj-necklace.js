@@ -66,6 +66,29 @@
         CHAIN_METALNESS: 1.0,
         CHAIN_ENVINTENSITY: 1.15,
 
+        // --- Soft-body chain (the "mềm như chất lỏng / gợn sóng" feel) ------------
+        // The chain is simulated as a VERLET ROPE: a ring of nodes with inertia that
+        // spring toward their rest shape, sag under gravity, and pass waves to their
+        // neighbours — so it ripples and sways like a real flexible necklace / a game
+        // cloth model, instead of being a rigid tube. Rebuilt into a tube each frame.
+        SOFT_ENABLED: true,
+        SOFT_NODES: 30,         // simulation nodes around the loop (more = smoother wave, heavier)
+        SOFT_TUBE_SEGMENTS: 140,// tube length segments rebuilt each frame from the nodes
+        SOFT_GRAVITY: 520,      // world-down pull → sag + response when you tilt (liquid sag)
+        SOFT_STIFFNESS: 210,    // pull back toward the rest necklace shape (lower = more liquid/wobbly)
+        SOFT_NEIGHBOR: 95,      // wave coupling between neighbour nodes → ripples travel along the chain
+        SOFT_DAMPING: 0.9,      // velocity retention 0..1 (higher = ripples last longer / more fluid)
+        SOFT_PIN_STRENGTH: 8,   // how hard the back/sides are held to the neck (front stays free to ripple)
+        SOFT_MAX_DEV: 16,       // max a node may stray from rest (mm) → can never detach / explode
+
+        // --- End fade — dissolve the two side ends into the neck ------------------
+        // A depth-based alpha fade: chain vertices toward the BACK (lower local z) fade to
+        // invisible, so where the chain curves behind the neck it vanishes smoothly instead
+        // of ending in a hard floating tip ("giả chân"). Works with the depth occluder.
+        FADE_ENABLED: true,
+        FADE_START_FRAC: 0.5,   // begin fading this far back (0 = front, 1 = back) — sides start to fade
+        FADE_END_FRAC: 0.82,    // fully invisible this far back → the ends disappear into the neck
+
         // Neck occluder — an invisible depth-only cylinder shaped to the neck. It HIDES the
         // chain where it wraps BEHIND the neck, so the two ends tuck behind it instead of
         // floating ("giả chân"). The front + sides stick out past it and stay visible.
@@ -229,6 +252,9 @@
         neckOccluder: null,   // invisible depth cylinder that hides the wrap-behind ends
         chainMesh: null,
         chainMat: null,
+        // soft-body chain (verlet rope) state — preallocated, simulated each frame:
+        softRest: null, softCur: null, softPrev: null, softFreedom: null, softCurve: null,
+        softDown: null, softInvQuat: null,
         pendantPivot: null,   // Object3D at the bail point; physics rotates THIS (pendulum)
         pendantMesh: null,    // the product image plane, hung below the pivot
         pendantMat: null,
@@ -242,6 +268,72 @@
     const PHYS = { init: false, t: 0, yaw: 0, pitch: 0, roll: 0, sx: 0, vx: 0, sz: 0, vz: 0 };
     const texLoader = new THREE.TextureLoader();
 
+    function smoothstep01(t) {
+        t = t < 0 ? 0 : (t > 1 ? 1 : t);
+        return t * t * (3 - 2 * t);
+    }
+
+    // Depth-based alpha fade injected into the chain's MeshStandardMaterial: chain
+    // vertices toward the BACK (lower local z) fade to invisible, so the two side ends
+    // dissolve into the neck instead of ending in a hard floating tip. Same proven
+    // onBeforeCompile pattern WebAR.rocks uses to fade glasses temples.
+    function applyChainFade(mat, zStart, zEnd) {
+        mat.transparent = true;
+        mat.depthWrite = true; // thin metal still reads solid; faded ends sit behind the occluder
+        mat.onBeforeCompile = function (sh) {
+            sh.uniforms.uFadeZ = { value: new THREE.Vector2(zStart, zEnd) };
+            sh.vertexShader = 'varying float vChainZ;\n' + sh.vertexShader.replace(
+                '#include <begin_vertex>',
+                '#include <begin_vertex>\n  vChainZ = position.z;'
+            );
+            sh.fragmentShader = 'uniform vec2 uFadeZ;\nvarying float vChainZ;\n' + sh.fragmentShader.replace(
+                '#include <dithering_fragment>',
+                '#include <dithering_fragment>\n  gl_FragColor.a *= smoothstep(uFadeZ.y, uFadeZ.x, vChainZ);'
+            );
+        };
+    }
+
+    // Per-frame soft-body chain step (verlet rope). Each node has inertia, springs toward
+    // its rest shape (stiffer at the pinned back, free at the front), sags under gravity
+    // (in true world-down, so tilting your head makes it shift/ripple), and exchanges a
+    // wave with its neighbours. A deviation clamp guarantees it can never explode/detach.
+    function simulateChain(dt, invQuat) {
+        const cur = REFS.softCur, prev = REFS.softPrev, rest = REFS.softRest, free = REFS.softFreedom;
+        if (!cur) return;
+        const n = cur.length;
+        const down = REFS.softDown.set(0, -1, 0).applyQuaternion(invQuat); // world-down in chain-local space
+        const g = PARAMS.SOFT_GRAVITY, ks = PARAMS.SOFT_STIFFNESS, kn = PARAMS.SOFT_NEIGHBOR;
+        const damp = PARAMS.SOFT_DAMPING, pin = PARAMS.SOFT_PIN_STRENGTH, dev = PARAMS.SOFT_MAX_DEV;
+        const h2 = dt * dt;
+        for (let i = 0; i < n; i++) {
+            const f = free[i];
+            const ci = cur[i], pi = prev[i], ri = rest[i];
+            if (f <= 0.02) { ci.copy(ri); pi.copy(ri); continue; } // hard-pinned to the neck
+            const L = cur[(i - 1 + n) % n], R = cur[(i + 1) % n];
+            const kRest = ks * (1 + (1 - f) * pin);
+            const ax = (ri.x - ci.x) * kRest + down.x * g * f + kn * ((L.x + R.x) * 0.5 - ci.x);
+            const ay = (ri.y - ci.y) * kRest + down.y * g * f + kn * ((L.y + R.y) * 0.5 - ci.y);
+            const az = (ri.z - ci.z) * kRest + down.z * g * f + kn * ((L.z + R.z) * 0.5 - ci.z);
+            const vx = (ci.x - pi.x) * damp + ax * h2;
+            const vy = (ci.y - pi.y) * damp + ay * h2;
+            const vz = (ci.z - pi.z) * damp + az * h2;
+            pi.copy(ci);
+            ci.x += vx; ci.y += vy; ci.z += vz;
+            // clamp deviation from rest so a violent motion can never detach/explode the rope
+            const dx = ci.x - ri.x, dy = ci.y - ri.y, dz = ci.z - ri.z;
+            const d2 = dx * dx + dy * dy + dz * dz;
+            if (d2 > dev * dev) {
+                const k = dev / Math.sqrt(d2);
+                ci.x = ri.x + dx * k; ci.y = ri.y + dy * k; ci.z = ri.z + dz * k;
+            }
+        }
+        // rebuild the tube from the simulated nodes (the curve shares the softCur array)
+        REFS.chainMesh.geometry.dispose();
+        REFS.chainMesh.geometry = new THREE.TubeGeometry(
+            REFS.softCurve, PARAMS.SOFT_TUBE_SEGMENTS, PARAMS.CHAIN_THICK, PARAMS.CHAIN_RADIAL, true
+        );
+    }
+
     // ---------------------------------------------------------------------------
     // Build the necklace: a draping chain tube + a textured pendant plane.
     // ---------------------------------------------------------------------------
@@ -249,27 +341,46 @@
         const neck = REFS.neck;
         const group = new THREE.Object3D();
 
-        // --- Chain: a closed catenary-like loop around the neck ellipse ----------
-        const pts = [];
-        for (let i = 0; i < PARAMS.LOOP_SAMPLES; i++) {
-            const t = (i / PARAMS.LOOP_SAMPLES) * Math.PI * 2;
-            const c = Math.cos(t);
-            const s = Math.sin(t);
+        // --- Chain: a SOFT-BODY rope around the neck. We sample the rest loop, then (if
+        //     SOFT_ENABLED) simulate it as a verlet rope each frame so it ripples / sways
+        //     like a real flexible necklace. A depth-based alpha fade dissolves the two side
+        //     ends into the neck so they never end in a hard floating tip ("giả chân").
+        const nodeCount = PARAMS.SOFT_ENABLED ? PARAMS.SOFT_NODES : PARAMS.LOOP_SAMPLES;
+        const rest = [], cur = [], prev = [], freedom = [];
+        let zMin = Infinity, zMax = -Infinity;
+        for (let i = 0; i < nodeCount; i++) {
+            const t = (i / nodeCount) * Math.PI * 2;
+            const c = Math.cos(t), s = Math.sin(t);
             const x = neck.centerX + s * neck.radiusX;
             const z = neck.centerZ + c * neck.radiusZ;
             const y = neck.yOf(c);
-            pts.push(new THREE.Vector3(x, y, z));
+            rest.push(new THREE.Vector3(x, y, z));
+            cur.push(new THREE.Vector3(x, y, z));
+            prev.push(new THREE.Vector3(x, y, z));
+            // front (c→1) ripples freely; sides partial; back (c→−1) stays pinned to the neck
+            freedom.push(smoothstep01((c + 0.4) / 1.3));
+            if (z < zMin) zMin = z;
+            if (z > zMax) zMax = z;
         }
-        const curve = new THREE.CatmullRomCurve3(pts, true, 'catmullrom', 0.5);
-        const tubeGeo = new THREE.TubeGeometry(curve, PARAMS.CHAIN_SEGMENTS, PARAMS.CHAIN_THICK, PARAMS.CHAIN_RADIAL, true);
+        REFS.softRest = rest; REFS.softCur = cur; REFS.softPrev = prev; REFS.softFreedom = freedom;
+        REFS.softCurve = new THREE.CatmullRomCurve3(cur, true, 'catmullrom', 0.5);
+
         REFS.chainMat = new THREE.MeshStandardMaterial({
             color: PARAMS.METAL_WHITE,
             metalness: PARAMS.CHAIN_METALNESS,
             roughness: PARAMS.CHAIN_ROUGHNESS,
             envMapIntensity: PARAMS.CHAIN_ENVINTENSITY
         });
-        REFS.chainMesh = new THREE.Mesh(tubeGeo, REFS.chainMat);
+        if (PARAMS.FADE_ENABLED) {
+            const span = (zMax - zMin) || 1;
+            applyChainFade(REFS.chainMat, zMax - span * PARAMS.FADE_START_FRAC, zMax - span * PARAMS.FADE_END_FRAC);
+        }
+        REFS.chainMesh = new THREE.Mesh(
+            new THREE.TubeGeometry(REFS.softCurve, PARAMS.SOFT_TUBE_SEGMENTS, PARAMS.CHAIN_THICK, PARAMS.CHAIN_RADIAL, true),
+            REFS.chainMat
+        );
         REFS.chainMesh.renderOrder = 10;
+        REFS.chainMesh.frustumCulled = false; // geometry is rebuilt each frame
         group.add(REFS.chainMesh);
 
         // --- Pendant: the PNJ product image, hung from a PIVOT so it swings like a
@@ -389,6 +500,8 @@
         REFS.physEuler = new THREE.Euler();
         REFS.physPos = new THREE.Vector3();
         REFS.physScale = new THREE.Vector3();
+        REFS.softDown = new THREE.Vector3();      // world-down transformed into chain-local space
+        REFS.softInvQuat = new THREE.Quaternion(); // inverse neck rotation (for soft-body gravity)
 
         // nicer tone mapping (matches the WebAR.rocks mirror helper):
         REFS.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -514,17 +627,15 @@
         });
     }
 
-    // Per-frame pendant PHYSICS — a spring-damper pendulum that makes the charm swing
-    // and settle like a real 3D model (nod → it swings forward/back, lean & head-shake →
-    // it sways side to side). The chain stays pressed to the neck (rigid is correct there);
-    // only the hanging pendant has secondary motion. Driven by the live neck pose, so it
-    // needs no noisy derivatives and can never drift.
+    // Per-frame PHYSICS — soft-body chain ripple + pendant pendulum swing. Both are driven
+    // by the live neck pose so the necklace moves like a real 3D model: nod → it sways
+    // forward/back, lean & head-shake → it ripples and swings side to side, then settles.
     function onTrack() {
-        if (!PARAMS.PHYS_ENABLED || !REFS.pendantPivot || !REFS.follower) return;
+        if (!REFS.follower) return;
         const parent = REFS.follower.parent; // faceFollowerParent: a direct child of the scene,
         if (!parent || !parent.visible) return; //   so parent.matrix IS its world matrix.
 
-        // Decompose the live neck pose → yaw / pitch / roll (radians).
+        // Decompose the live neck pose → yaw / pitch / roll (radians) + quaternion.
         REFS.physMat.copy(parent.matrix);
         REFS.physMat.decompose(REFS.physPos, REFS.physQuat, REFS.physScale);
         REFS.physEuler.setFromQuaternion(REFS.physQuat, 'YXZ');
@@ -538,31 +649,37 @@
         }
         let dt = now - PHYS.t; PHYS.t = now;
         if (dt <= 0) return;
-        if (dt > 0.04) dt = 0.04; // clamp → integrator stays stable after a stall / tab switch
+        if (dt > 0.04) dt = 0.04; // clamp → integrators stay stable after a stall / tab switch
 
-        // head-shake angular velocity → a sideways impulse on the charm
-        const wYaw = (yaw - PHYS.yaw) / dt;
+        // --- 1) Soft-body chain ripple (the flexible "liquid" chain) -------------
+        if (PARAMS.SOFT_ENABLED && REFS.softCur) {
+            REFS.softInvQuat.copy(REFS.physQuat).invert(); // world-down → chain-local for gravity
+            simulateChain(dt, REFS.softInvQuat);
+        }
+
+        // --- 2) Pendant pendulum swing -------------------------------------------
+        if (PARAMS.PHYS_ENABLED && REFS.pendantPivot) {
+            const wYaw = (yaw - PHYS.yaw) / dt; // head-shake angular velocity → sideways impulse
+            // Rest targets (pendant local frame): cancel the neck rotation so the charm hangs
+            // toward vertical. The spring LAGS this target → that lag is the visible swing.
+            const restX = -PARAMS.GRAVITY_PITCH * pitch; // nod → forward/back hang
+            const restZ = -PARAMS.GRAVITY_ROLL * roll;   // lean → stays vertical
+
+            const k = PARAMS.PHYS_STIFFNESS, c = PARAMS.PHYS_DAMPING;
+            const ax = -k * (PHYS.sx - restX) - c * PHYS.vx;
+            const az = -k * (PHYS.sz - restZ) - c * PHYS.vz - PARAMS.YAW_SHAKE_KICK * wYaw;
+            PHYS.vx += ax * dt; PHYS.sx += PHYS.vx * dt;
+            PHYS.vz += az * dt; PHYS.sz += PHYS.vz * dt;
+
+            const m = PARAMS.SWING_MAX;
+            if (PHYS.sx > m) { PHYS.sx = m; PHYS.vx = 0; } else if (PHYS.sx < -m) { PHYS.sx = -m; PHYS.vx = 0; }
+            if (PHYS.sz > m) { PHYS.sz = m; PHYS.vz = 0; } else if (PHYS.sz < -m) { PHYS.sz = -m; PHYS.vz = 0; }
+
+            REFS.pendantPivot.rotation.x = PARAMS.PENDANT_TILT + PHYS.sx;
+            REFS.pendantPivot.rotation.z = PHYS.sz;
+        }
+
         PHYS.yaw = yaw; PHYS.pitch = pitch; PHYS.roll = roll;
-
-        // Rest targets (in the pendant's local frame): cancel the neck rotation so the charm
-        // hangs toward vertical. The spring LAGS this target → that lag is the visible swing.
-        const restX = -PARAMS.GRAVITY_PITCH * pitch; // nod → forward/back hang
-        const restZ = -PARAMS.GRAVITY_ROLL * roll;   // lean → stays vertical
-
-        const k = PARAMS.PHYS_STIFFNESS, c = PARAMS.PHYS_DAMPING;
-        // damped harmonic oscillator, semi-implicit Euler (stable):
-        const ax = -k * (PHYS.sx - restX) - c * PHYS.vx;
-        const az = -k * (PHYS.sz - restZ) - c * PHYS.vz - PARAMS.YAW_SHAKE_KICK * wYaw;
-        PHYS.vx += ax * dt; PHYS.sx += PHYS.vx * dt;
-        PHYS.vz += az * dt; PHYS.sz += PHYS.vz * dt;
-
-        // clamp so a violent motion can never throw the charm to a broken angle
-        const m = PARAMS.SWING_MAX;
-        if (PHYS.sx > m) { PHYS.sx = m; PHYS.vx = 0; } else if (PHYS.sx < -m) { PHYS.sx = -m; PHYS.vx = 0; }
-        if (PHYS.sz > m) { PHYS.sz = m; PHYS.vz = 0; } else if (PHYS.sz < -m) { PHYS.sz = -m; PHYS.vz = 0; }
-
-        REFS.pendantPivot.rotation.x = PARAMS.PENDANT_TILT + PHYS.sx;
-        REFS.pendantPivot.rotation.z = PHYS.sz;
     }
 
     // ---------------------------------------------------------------------------
