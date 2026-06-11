@@ -40,20 +40,20 @@
     // Tunables — tweak these to restyle the chain/pendant. All in torso mm space.
     // ---------------------------------------------------------------------------
     const PARAMS = {
-        CHAIN_GAP: 1.03,        // chain radius vs measured neck radius (>1 = rides just outside the skin)
+        CHAIN_GAP: 1.0,         // chain radius vs measured neck radius (>1 = rides just outside the skin)
         CHAIN_THICK: 1.15,      // chain tube radius (mm). Keep thin for a delicate look.
         CHAIN_SEGMENTS: 320,    // tube length segments (smoothness of the drape)
         CHAIN_RADIAL: 10,       // tube radial segments (roundness)
-        FRONT_DRAPE: 54,        // extra downward sag at the front centre from the chain's weight (mm)
+        FRONT_DRAPE: 58,        // extra downward sag at the front centre from the chain's weight (mm)
         LOOP_SAMPLES: 170,      // points sampled around the neck for the curve
         // The raw neck-side points sit HIGH (near the jaw). These pull the sides + nape DOWN
         // toward the front level so the chain rests on the neck/collar and its two ends tuck
         // in low, instead of shooting up beside the jaw and floating ("giả chân").
-        SIDE_RAISE: 0.66,       // 0 = sides as low as the front (flat), 1 = up at the raw neck-top points
+        SIDE_RAISE: 0.6,        // 0 = sides as low as the front (flat), 1 = up at the raw neck-top points
         BACK_RAISE: 0.74,       // how high the nape rides (it's hidden by the occluder anyway)
         // Lift the WHOLE necklace up the neck (+mm = higher). The tracked neck points sit a bit
         // low for a worn look, so this raises the entire loop so it grips higher on the neck.
-        NECK_LIFT: 26,
+        NECK_LIFT: 30,
 
         PENDANT_SIZE: 46,       // pendant width (mm); height follows the image aspect ratio
         PENDANT_GAP: -7,        // bail vs chain front node (mm). NEGATIVE = the pendant top OVERLAPS the
@@ -99,13 +99,13 @@
         SOFT_ENABLED: true,
         SOFT_NODES: 34,         // simulation nodes around the loop (more = smoother wave, heavier)
         SOFT_TUBE_SEGMENTS: 150,// tube length segments rebuilt each frame from the nodes
-        SOFT_GRAVITY: 130,      // gentle weight + lean-hang only — LOW so it doesn't move on its own
-        SOFT_STIFFNESS: 78,     // firm pull back to the rest shape → holds still / settles fast
-        SOFT_NEIGHBOR: 58,      // wave coupling between neighbours → ripples travel along the chain
-        SOFT_DAMPING: 0.74,     // velocity retention 0..1 (LOW → motion dies fast, no constant wobble)
+        SOFT_GRAVITY: 150,      // gentle weight + lean-hang only — LOW so it doesn't move on its own
+        SOFT_STIFFNESS: 64,     // firm pull back to the rest shape → holds still / settles fast
+        SOFT_NEIGHBOR: 60,      // wave coupling between neighbours → ripples travel along the chain
+        SOFT_DAMPING: 0.76,     // velocity retention 0..1 (LOW → motion dies fast, no constant wobble)
         SOFT_PIN_STRENGTH: 12,  // how hard the back/sides are held to the neck (front stays free to ripple)
-        SOFT_MAX_DEV: 9,        // max a node may stray from rest (mm) → keeps the ripple TINY, never wild
-        SOFT_MOTION_DEADZONE: 2.8, // only a BIG move (mm/frame) ripples the chain; phone jitter = dead still
+        SOFT_MAX_DEV: 11,       // max a node may stray from rest (mm) → keeps the ripple TINY, never wild
+        SOFT_MOTION_DEADZONE: 2.4, // only a BIG move (mm/frame) ripples the chain; phone jitter = dead still
         // Only the FRONT arc swings; the sides + nape stay PINNED to the neck so the chain
         // grips both sides and the back like a real necklace (cos(theta) above this = free).
         // 1=only the very front free, 0=half the loop free. ~0.3 → front ~±72° drapes, rest hugs.
