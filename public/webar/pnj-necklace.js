@@ -617,6 +617,7 @@
         REFS.physEuler = new THREE.Euler();
         REFS.physPos = new THREE.Vector3();
         REFS.physScale = new THREE.Vector3();
+        REFS.physFwd = new THREE.Vector3();       // neck forward dir → gimbal-free, symmetric yaw
         REFS.softDown = new THREE.Vector3();      // world-down transformed into chain-local space
         REFS.softInvQuat = new THREE.Quaternion(); // inverse neck rotation (for soft-body gravity)
         REFS.softMatCur = new THREE.Matrix4();
@@ -757,11 +758,17 @@
         const parent = REFS.follower.parent; // faceFollowerParent: a direct child of the scene,
         if (!parent || !parent.visible) return; //   so parent.matrix IS its world matrix.
 
-        // Decompose the live neck pose → yaw / pitch / roll (radians) + quaternion.
+        // Decompose the live neck pose → quaternion + pitch/roll (Euler), but take YAW from the
+        // neck's FORWARD vector, NOT euler.y. Euler 'YXZ' yaw couples with pitch (camera placed
+        // low = big pitch) and becomes ASYMMETRIC for left vs right turns — that was why one
+        // side hid on a turn and the other didn't. atan2(fwd.x, fwd.z) is the pure horizontal
+        // heading: symmetric for ±turn by construction, and ≈0 when facing straight at ANY pitch.
         REFS.physMat.copy(parent.matrix);
         REFS.physMat.decompose(REFS.physPos, REFS.physQuat, REFS.physScale);
         REFS.physEuler.setFromQuaternion(REFS.physQuat, 'YXZ');
-        const yaw = REFS.physEuler.y, pitch = REFS.physEuler.x, roll = REFS.physEuler.z;
+        const pitch = REFS.physEuler.x, roll = REFS.physEuler.z;
+        const fwd = REFS.physFwd.set(0, 0, 1).applyQuaternion(REFS.physQuat);
+        const yaw = Math.atan2(fwd.x, fwd.z); // gimbal-free, symmetric left/right
 
         const now = performance.now() / 1000;
         if (!PHYS.init) {
