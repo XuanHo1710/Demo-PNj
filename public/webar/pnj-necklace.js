@@ -24,6 +24,18 @@
 (function () {
     'use strict';
 
+    // Absolute base URL of THIS script's folder (e.g. https://host/webar/). We load every
+    // asset (neural net, envmap, occluder, catalog) through this ABSOLUTE base instead of a
+    // relative path. Reason: on Vercel `cleanUrls` serves necklace.html as /webar/necklace
+    // (or with a trailing slash), which shifts the base a RELATIVE XHR resolves against →
+    // the NN request 404s → the SPA fallback returns index.html → "JSON.parse(<!doctype".
+    // An absolute path is immune to that.
+    const ASSET_BASE = (function () {
+        const s = document.querySelector('script[src*="pnj-necklace.js"]');
+        try { if (s) return new URL('.', s.src).href; } catch (e) { /* ignore */ }
+        return new URL('webar/', location.origin + '/').href;
+    })();
+
     // ---------------------------------------------------------------------------
     // Tunables — tweak these to restyle the chain/pendant. All in torso mm space.
     // ---------------------------------------------------------------------------
@@ -39,6 +51,9 @@
         // in low, instead of shooting up beside the jaw and floating ("giả chân").
         SIDE_RAISE: 0.8,        // 0 = sides as low as the front (flat), 1 = up at the raw neck-top points
         BACK_RAISE: 0.74,       // how high the nape rides (it's hidden by the occluder anyway)
+        // Lift the WHOLE necklace up the neck (+mm = higher). The tracked neck points sit a bit
+        // low for a worn look, so this raises the entire loop so it grips higher on the neck.
+        NECK_LIFT: 40,
 
         PENDANT_SIZE: 46,       // pendant width (mm); height follows the image aspect ratio
         PENDANT_GAP: 4,         // gap between the chain front point and the top of the pendant (mm)
@@ -230,10 +245,10 @@
         // The raw neck-side points sit high (near the jaw), so SIDE_RAISE / BACK_RAISE pull
         // the sides and nape DOWN toward the front level — the chain then rests on the neck
         // instead of shooting up beside the jaw (which looked fake + floating).
-        const yFront = (F.y + Fd.y) / 2 - PARAMS.FRONT_DRAPE;
+        const yFront = (F.y + Fd.y) / 2 - PARAMS.FRONT_DRAPE + PARAMS.NECK_LIFT;
         const ySideRaw = (L.y + R.y) / 2;
-        const ySide = yFront + (ySideRaw - yFront) * PARAMS.SIDE_RAISE;
-        const yBack = yFront + (B.y - yFront) * PARAMS.BACK_RAISE;
+        const ySide = yFront + (ySideRaw + PARAMS.NECK_LIFT - yFront) * PARAMS.SIDE_RAISE;
+        const yBack = yFront + (B.y + PARAMS.NECK_LIFT - yFront) * PARAMS.BACK_RAISE;
         const yb = (yFront - yBack) / 2;
         const yd = (yFront + yBack) / 2 - ySide;
         const yOf = function (cosT) { return ySide + yb * cosT + yd * cosT * cosT; };
@@ -572,7 +587,7 @@
         // environment map → realistic gold/diamond reflections:
         const pmrem = new THREE.PMREMGenerator(REFS.renderer);
         pmrem.compileEquirectangularShader();
-        new THREE.RGBELoader().setDataType(THREE.HalfFloatType).load('assets/envmaps/venice_sunset_1k.hdr', function (hdr) {
+        new THREE.RGBELoader().setDataType(THREE.HalfFloatType).load(ASSET_BASE + 'assets/envmaps/venice_sunset_1k.hdr', function (hdr) {
             REFS.envMap = pmrem.fromEquirectangular(hdr).texture;
             REFS.scene.environment = REFS.envMap;
             pmrem.dispose();
@@ -582,7 +597,7 @@
         // IMPORTANT: pass a real LoadingManager — the helper does `new GLTFLoader(manager)` and
         // GLTFLoader.load() calls `manager.itemStart()`, so a null manager throws.
         REFS.loadingManager = new THREE.LoadingManager();
-        REFS.helper.add_occluderFromFile('assets/models3D/occluder.glb', null, REFS.loadingManager, false);
+        REFS.helper.add_occluderFromFile(ASSET_BASE + 'assets/models3D/occluder.glb', null, REFS.loadingManager, false);
 
         // build the necklace geometry and attach it to the neck follower:
         REFS.neck = buildNeckModel();
@@ -656,7 +671,7 @@
         console.log('[PNJ necklace] using', nn.path, '(' + nn.points + ' points, ' + nn.label + ')');
         REFS.helper.init({
             spec: {
-                NNCPath: nn.path,
+                NNCPath: ASSET_BASE + nn.path,
                 scanSettings: { threshold: nn.threshold },
                 videoSettings: videoSettings()
             },
@@ -849,7 +864,7 @@
     }
 
     function loadCatalog() {
-        return fetch('necklace-catalog.json')
+        return fetch(ASSET_BASE + 'necklace-catalog.json')
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 STATE.catalog = data.items || [];
