@@ -44,16 +44,16 @@
         CHAIN_THICK: 1.15,      // chain tube radius (mm). Keep thin for a delicate look.
         CHAIN_SEGMENTS: 320,    // tube length segments (smoothness of the drape)
         CHAIN_RADIAL: 10,       // tube radial segments (roundness)
-        FRONT_DRAPE: 62,        // extra downward sag at the front centre from the chain's weight (mm)
+        FRONT_DRAPE: 44,        // extra downward sag at the front centre from the chain's weight (mm)
         LOOP_SAMPLES: 170,      // points sampled around the neck for the curve
         // The raw neck-side points sit HIGH (near the jaw). These pull the sides + nape DOWN
         // toward the front level so the chain rests on the neck/collar and its two ends tuck
         // in low, instead of shooting up beside the jaw and floating ("giả chân").
-        SIDE_RAISE: 0.8,        // 0 = sides as low as the front (flat), 1 = up at the raw neck-top points
+        SIDE_RAISE: 0.66,       // 0 = sides as low as the front (flat), 1 = up at the raw neck-top points
         BACK_RAISE: 0.74,       // how high the nape rides (it's hidden by the occluder anyway)
         // Lift the WHOLE necklace up the neck (+mm = higher). The tracked neck points sit a bit
         // low for a worn look, so this raises the entire loop so it grips higher on the neck.
-        NECK_LIFT: 40,
+        NECK_LIFT: 26,
 
         PENDANT_SIZE: 46,       // pendant width (mm); height follows the image aspect ratio
         PENDANT_GAP: 4,         // gap between the chain front point and the top of the pendant (mm)
@@ -90,13 +90,13 @@
         SOFT_ENABLED: true,
         SOFT_NODES: 34,         // simulation nodes around the loop (more = smoother wave, heavier)
         SOFT_TUBE_SEGMENTS: 150,// tube length segments rebuilt each frame from the nodes
-        SOFT_GRAVITY: 240,      // gentle weight + lean-hang only — LOW so it doesn't move on its own
-        SOFT_STIFFNESS: 66,     // firm pull back to the rest shape → holds still / settles fast
-        SOFT_NEIGHBOR: 55,      // wave coupling between neighbours → ripples travel along the chain
-        SOFT_DAMPING: 0.78,     // velocity retention 0..1 (LOW → motion dies fast, no constant wobble)
-        SOFT_PIN_STRENGTH: 10,  // how hard the back/sides are held to the neck (front stays free to ripple)
-        SOFT_MAX_DEV: 12,       // max a node may stray from rest (mm) → keeps the ripple SUBTLE, never wild
-        SOFT_MOTION_DEADZONE: 2.2, // only a STRONG move (mm/frame) ripples the chain; normal motion = still
+        SOFT_GRAVITY: 130,      // gentle weight + lean-hang only — LOW so it doesn't move on its own
+        SOFT_STIFFNESS: 78,     // firm pull back to the rest shape → holds still / settles fast
+        SOFT_NEIGHBOR: 50,      // wave coupling between neighbours → ripples travel along the chain
+        SOFT_DAMPING: 0.7,      // velocity retention 0..1 (LOW → motion dies fast, no constant wobble)
+        SOFT_PIN_STRENGTH: 12,  // how hard the back/sides are held to the neck (front stays free to ripple)
+        SOFT_MAX_DEV: 7,        // max a node may stray from rest (mm) → keeps the ripple TINY, never wild
+        SOFT_MOTION_DEADZONE: 3.6, // only a BIG move (mm/frame) ripples the chain; phone jitter = dead still
         // Only the FRONT arc swings; the sides + nape stay PINNED to the neck so the chain
         // grips both sides and the back like a real necklace (cos(theta) above this = free).
         // 1=only the very front free, 0=half the loop free. ~0.3 → front ~±72° drapes, rest hugs.
@@ -107,8 +107,21 @@
         // invisible, so where the chain curves behind the neck it vanishes smoothly instead
         // of ending in a hard floating tip ("giả chân"). Works with the depth occluder.
         FADE_ENABLED: true,
-        FADE_START_FRAC: 0.6,  // begin fading this far back (0 = front, 1 = back) — only the nape fades
-        FADE_END_FRAC: 0.93,    // fully invisible this far back → the very ends disappear into the neck
+        FADE_START_FRAC: 0.74, // begin fading this far back (0 = front, 1 = back) — only the nape fades
+        FADE_END_FRAC: 0.95,    // fully invisible this far back → the very ends disappear into the neck
+
+        // --- Yaw side-hide — DISABLED ---------------------------------------------
+        // This faded the far strand on a head turn, but it kept making the necklace look
+        // ASYMMETRIC facing straight (any tiny yaw bias fades one side) and ate the neck
+        // wrap. The depth occluder already hides the back symmetrically + correctly in 3D,
+        // which is the realistic look. Left here (off) so it can be re-enabled if ever fixed.
+        YAW_HIDE_ENABLED: false,
+        YAW_HIDE_START: 0.34,   // start hiding the far strand at this turn from neutral (rad, ~19°)
+        YAW_HIDE_END: 0.78,     // far strand fully faded by this turn (rad, ~45°)
+        YAW_HIDE_MAX: 0.92,     // max alpha removed (0..1) — <1 so a faded strand is a faint ghost, never a screen-wide blank
+        YAW_FRONT_PROTECT: 0.4, // front fraction of the loop that NEVER yaw-fades (keeps the pendant + front drape)
+        YAW_REST_ADAPT: 0.03,   // how fast the neutral-yaw baseline self-calibrates (0..1, small = slow)
+        YAW_HIDE_SIGN: 1,       // flip to -1 if the WRONG side hides on turn
 
         // Neck occluder — an invisible depth-only cylinder shaped to the neck. It HIDES the
         // chain where it wraps BEHIND the neck, so the two ends tuck behind it instead of
@@ -270,6 +283,7 @@
         neckOccluder: null,   // invisible depth cylinder that hides the wrap-behind ends
         chainMesh: null,
         chainMat: null,
+        chainShader: null,    // captured onBeforeCompile shader → lets us update uYaw each frame
         // soft-body chain (verlet rope) state — preallocated, simulated each frame:
         softRest: null, softCur: null, softPrev: null, softFreedom: null, softCurve: null,
         softDown: null, softInvQuat: null,
@@ -285,7 +299,7 @@
     };
     const STATE = { product: null, catalog: [], booted: false };
     // Pendant pendulum physics state (swing angle + angular velocity per axis).
-    const PHYS = { init: false, t: 0, yaw: 0, pitch: 0, roll: 0, sx: 0, vx: 0, sz: 0, vz: 0 };
+    const PHYS = { init: false, t: 0, yaw: 0, pitch: 0, roll: 0, sx: 0, vx: 0, sz: 0, vz: 0, yawRest: 0, yawRestInit: false };
     const texLoader = new THREE.TextureLoader();
 
     function smoothstep01(t) {
@@ -297,19 +311,35 @@
     // vertices toward the BACK (lower local z) fade to invisible, so the two side ends
     // dissolve into the neck instead of ending in a hard floating tip. Same proven
     // onBeforeCompile pattern WebAR.rocks uses to fade glasses temples.
-    function applyChainFade(mat, zStart, zEnd) {
+    function applyChainFade(mat, zStart, zEnd, zProtect0, zProtect1) {
         mat.transparent = true;
         mat.depthWrite = true; // thin metal still reads solid; faded ends sit behind the occluder
         mat.onBeforeCompile = function (sh) {
             sh.uniforms.uFadeZ = { value: new THREE.Vector2(zStart, zEnd) };
-            sh.vertexShader = 'varying float vChainZ;\n' + sh.vertexShader.replace(
+            // uYaw = live signed turn-from-neutral (rad); uYawFade = (start,end,maxAlphaRemoved).
+            // uYawProtect = the z range of the FRONT that never yaw-fades (keeps the pendant).
+            sh.uniforms.uYaw = { value: 0 };
+            sh.uniforms.uYawFade = { value: new THREE.Vector3(PARAMS.YAW_HIDE_START, PARAMS.YAW_HIDE_END, PARAMS.YAW_HIDE_MAX) };
+            sh.uniforms.uYawProtect = { value: new THREE.Vector2(zProtect0, zProtect1) };
+            REFS.chainShader = sh; // keep a handle so onTrack can update uYaw every frame
+            sh.vertexShader = 'varying float vChainZ;\nvarying float vChainX;\n' + sh.vertexShader.replace(
                 '#include <begin_vertex>',
-                '#include <begin_vertex>\n  vChainZ = position.z;'
+                '#include <begin_vertex>\n  vChainZ = position.z;\n  vChainX = position.x;'
             );
-            sh.fragmentShader = 'uniform vec2 uFadeZ;\nvarying float vChainZ;\n' + sh.fragmentShader.replace(
-                '#include <dithering_fragment>',
-                '#include <dithering_fragment>\n  gl_FragColor.a *= smoothstep(uFadeZ.y, uFadeZ.x, vChainZ);'
-            );
+            sh.fragmentShader =
+                'uniform vec2 uFadeZ;\nuniform float uYaw;\nuniform vec3 uYawFade;\nuniform vec2 uYawProtect;\nvarying float vChainZ;\nvarying float vChainX;\n' +
+                sh.fragmentShader.replace(
+                    '#include <dithering_fragment>',
+                    '#include <dithering_fragment>\n' +
+                    // 1) back-of-neck fade (the nape ends always dissolve)
+                    '  gl_FragColor.a *= smoothstep(uFadeZ.y, uFadeZ.x, vChainZ);\n' +
+                    // 2) yaw side-hide: only the side whose sign matches the turn (recede>0),
+                    //    only BEHIND the front-protect zone, and capped so it never fully blanks.
+                    '  float recede = uYaw * sign(vChainX);\n' +
+                    '  float byYaw = smoothstep(uYawFade.x, uYawFade.y, recede);\n' +
+                    '  float notFront = 1.0 - smoothstep(uYawProtect.x, uYawProtect.y, vChainZ);\n' +
+                    '  gl_FragColor.a *= 1.0 - uYawFade.z * byYaw * notFront;'
+                );
         };
     }
 
@@ -436,7 +466,15 @@
         });
         if (PARAMS.FADE_ENABLED) {
             const span = (zMax - zMin) || 1;
-            applyChainFade(REFS.chainMat, zMax - span * PARAMS.FADE_START_FRAC, zMax - span * PARAMS.FADE_END_FRAC);
+            // front-protect zone for the yaw-hide: the front YAW_FRONT_PROTECT of the z span
+            // never fades (keeps the pendant + front drape visible on a head turn).
+            const zp0 = zMax - span * (PARAMS.YAW_FRONT_PROTECT + 0.12);
+            const zp1 = zMax - span * PARAMS.YAW_FRONT_PROTECT;
+            applyChainFade(
+                REFS.chainMat,
+                zMax - span * PARAMS.FADE_START_FRAC, zMax - span * PARAMS.FADE_END_FRAC,
+                zp0, zp1
+            );
         }
         REFS.chainMesh = new THREE.Mesh(
             new THREE.TubeGeometry(REFS.softCurve, PARAMS.SOFT_TUBE_SEGMENTS, PARAMS.CHAIN_THICK, PARAMS.CHAIN_RADIAL, true),
@@ -712,11 +750,24 @@
         if (!PHYS.init) {
             PHYS.init = true; PHYS.t = now;
             PHYS.yaw = yaw; PHYS.pitch = pitch; PHYS.roll = roll;
+            PHYS.yawRest = yaw; PHYS.yawRestInit = true; // seed the neutral-yaw baseline
             return;
         }
         let dt = now - PHYS.t; PHYS.t = now;
         if (dt <= 0) return;
         if (dt > 0.04) dt = 0.04; // clamp → integrators stay stable after a stall / tab switch
+
+        // Yaw side-hide: feed the live turn-FROM-NEUTRAL to the chain shader. The neutral-yaw
+        // baseline self-calibrates (slow EMA) only while the head is fairly steady, so the
+        // resting pose reads as 0 turn → nothing hides when you just face the camera (that
+        // off-rest bias was why it "hid everything"). Only a real turn fades the far strand.
+        if (PARAMS.YAW_HIDE_ENABLED && REFS.chainShader) {
+            const wYawNow = Math.abs(yaw - PHYS.yaw) / dt; // rad/s
+            if (wYawNow < 0.6) { // steady-ish → adapt the neutral baseline toward the current yaw
+                PHYS.yawRest += (yaw - PHYS.yawRest) * PARAMS.YAW_REST_ADAPT;
+            }
+            REFS.chainShader.uniforms.uYaw.value = (yaw - PHYS.yawRest) * PARAMS.YAW_HIDE_SIGN;
+        }
 
         // --- 1) Soft-body chain ripple (the flexible "liquid" chain) -------------
         if (PARAMS.SOFT_ENABLED && REFS.softCur) {
