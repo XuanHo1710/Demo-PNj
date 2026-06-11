@@ -49,8 +49,8 @@
         // The raw neck-side points sit HIGH (near the jaw). These pull the sides + nape DOWN
         // toward the front level so the chain rests on the neck/collar and its two ends tuck
         // in low, instead of shooting up beside the jaw and floating ("giả chân").
-        SIDE_RAISE: 0.6,        // 0 = sides as low as the front (flat), 1 = up at the raw neck-top points
-        BACK_RAISE: 0.74,       // how high the nape rides (it's hidden by the occluder anyway)
+        SIDE_RAISE: 0.7,        // 0 = sides as low as the front (flat), 1 = up at the raw neck-top points
+        BACK_RAISE: 0.82,       // how high the nape rides (it's hidden by the occluder anyway)
         // Lift the WHOLE necklace up the neck (+mm = higher). The tracked neck points sit a bit
         // low for a worn look, so this raises the entire loop so it grips higher on the neck.
         NECK_LIFT: 30,
@@ -119,8 +119,8 @@
         // side stays → you get the "độ nghiêng" 3D turn look, with NO facing-straight asymmetry
         // (the old per-side sign-hide caused that). Works together with the depth occluder.
         FADE_ENABLED: true,
-        FADE_START_FRAC: 0.64, // begin fading at this facing-depth back (0 = front, 1 = back)
-        FADE_END_FRAC: 0.92,    // fully invisible by this facing-depth → ends dissolve into the neck
+        FADE_START_FRAC: 0.78, // begin fading at this facing-depth back (0 = front, 1 = back)
+        FADE_END_FRAC: 0.96,    // fully invisible by this facing-depth → ends dissolve into the neck
 
         // Yaw calibration for the depth-after-yaw fade (above). uYaw = head-turn from a slowly
         // self-calibrating neutral, so a small resting yaw bias never makes facing-straight uneven.
@@ -131,8 +131,8 @@
         // chain where it wraps BEHIND the neck, so the two ends tuck behind it instead of
         // floating ("giả chân"). The front + sides stick out past it and stay visible.
         OCCLUDER_ENABLED: true,
-        OCCLUDER_SCALE: 0.9,    // occluder radius vs chain radius (smaller → shows more sides, larger → hides more)
-        OCCLUDER_PUSH: 18,      // push the occluder BACK (mm) so it never eats the front chain / pendant
+        OCCLUDER_SCALE: 0.95,   // occluder radius vs chain radius (smaller → shows more sides, larger → hides more)
+        OCCLUDER_PUSH: 22,      // push the occluder BACK (mm) so it never eats the front chain / pendant
         OCCLUDER_HEIGHT: 260,   // occluder cylinder height (mm) — tall enough to cover the whole neck
 
         // 3D pose FOLLOW — how much the necklace rotates with you on each axis. The
