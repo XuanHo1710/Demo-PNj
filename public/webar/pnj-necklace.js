@@ -57,10 +57,17 @@
 
         PENDANT_SIZE: 46,       // pendant width (mm); height follows the image aspect ratio
         PENDANT_GAP: -7,        // bail vs chain front node (mm). NEGATIVE = the pendant top OVERLAPS the
-                                //   chain so the bail looks fused to it (no floating gap). More negative
-                                //   = more overlap / pendant rides higher; positive = a visible gap below.
+        //   chain so the bail looks fused to it (no floating gap). More negative
+        //   = more overlap / pendant rides higher; positive = a visible gap below.
         PENDANT_FWD: 6,         // push the pendant slightly forward of the chain so it never z-fights (mm)
         PENDANT_TILT: -0.12,    // small forward lean (rad) so the charm faces the camera a touch
+        // A thin metal CONNECTOR link drawn from the chain front node down to the top of the
+        // charm, so the pendant reads as physically hung from the chain (not floating below a
+        // transparent gap in the cutout). Uses the chain material (matches the metal colour).
+        PENDANT_LINK_ENABLED: true,
+        PENDANT_LINK_LEN: 3,    // length of the connector from the chain to the charm top (mm)
+        PENDANT_LINK_THICK: 1.1,// connector radius (mm) — thin like a jump-ring/bail wire
+        PENDANT_LINK_OVERLAP: 4,// start it this far ABOVE the bail so it visibly grips the chain (mm)
 
         // --- Pendant PHYSICS (the "lắc qua lắc lại" secondary motion) -------------
         // The pendant hangs from the chain (its bail) and behaves like a real PENDULUM:
@@ -94,11 +101,11 @@
         SOFT_TUBE_SEGMENTS: 150,// tube length segments rebuilt each frame from the nodes
         SOFT_GRAVITY: 130,      // gentle weight + lean-hang only — LOW so it doesn't move on its own
         SOFT_STIFFNESS: 78,     // firm pull back to the rest shape → holds still / settles fast
-        SOFT_NEIGHBOR: 50,      // wave coupling between neighbours → ripples travel along the chain
-        SOFT_DAMPING: 0.7,      // velocity retention 0..1 (LOW → motion dies fast, no constant wobble)
+        SOFT_NEIGHBOR: 58,      // wave coupling between neighbours → ripples travel along the chain
+        SOFT_DAMPING: 0.74,     // velocity retention 0..1 (LOW → motion dies fast, no constant wobble)
         SOFT_PIN_STRENGTH: 12,  // how hard the back/sides are held to the neck (front stays free to ripple)
-        SOFT_MAX_DEV: 7,        // max a node may stray from rest (mm) → keeps the ripple TINY, never wild
-        SOFT_MOTION_DEADZONE: 3.6, // only a BIG move (mm/frame) ripples the chain; phone jitter = dead still
+        SOFT_MAX_DEV: 9,        // max a node may stray from rest (mm) → keeps the ripple TINY, never wild
+        SOFT_MOTION_DEADZONE: 2.8, // only a BIG move (mm/frame) ripples the chain; phone jitter = dead still
         // Only the FRONT arc swings; the sides + nape stay PINNED to the neck so the chain
         // grips both sides and the back like a real necklace (cos(theta) above this = free).
         // 1=only the very front free, 0=half the loop free. ~0.3 → front ~±72° drapes, rest hugs.
@@ -112,8 +119,8 @@
         // side stays → you get the "độ nghiêng" 3D turn look, with NO facing-straight asymmetry
         // (the old per-side sign-hide caused that). Works together with the depth occluder.
         FADE_ENABLED: true,
-        FADE_START_FRAC: 0.55, // begin fading at this facing-depth back (0 = front, 1 = back)
-        FADE_END_FRAC: 0.86,    // fully invisible by this facing-depth → ends dissolve into the neck
+        FADE_START_FRAC: 0.64, // begin fading at this facing-depth back (0 = front, 1 = back)
+        FADE_END_FRAC: 0.92,    // fully invisible by this facing-depth → ends dissolve into the neck
 
         // Yaw calibration for the depth-after-yaw fade (above). uYaw = head-turn from a slowly
         // self-calibrating neutral, so a small resting yaw bias never makes facing-straight uneven.
@@ -489,6 +496,16 @@
         REFS.pendantMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), REFS.pendantMat);
         REFS.pendantMesh.renderOrder = 11;
         REFS.pendantPivot.add(REFS.pendantMesh);
+        // Thin metal connector link from the chain down to the charm (a child of the pivot so
+        // it swings with the pendant). Built once here, sized/placed in layoutPendant.
+        if (PARAMS.PENDANT_LINK_ENABLED) {
+            REFS.pendantLink = new THREE.Mesh(
+                new THREE.CylinderGeometry(PARAMS.PENDANT_LINK_THICK, PARAMS.PENDANT_LINK_THICK, 1, 8, 1),
+                REFS.chainMat // share the chain material → same metal colour / fade / lighting
+            );
+            REFS.pendantLink.renderOrder = 10;
+            REFS.pendantPivot.add(REFS.pendantLink);
+        }
         REFS.pendantPivot.visible = false; // shown once a texture is loaded
         group.add(REFS.pendantPivot);
 
@@ -536,6 +553,16 @@
         REFS.pendantPivot.rotation.set(PARAMS.PENDANT_TILT, 0, 0);
         REFS.pendantMesh.position.set(0, -h / 2, 0);
         REFS.pendantMesh.rotation.set(0, 0, 0);
+
+        // Connector link: a thin cylinder from just ABOVE the bail (into the chain) down to
+        // the top of the charm, so the pendant looks physically hung from the chain. Sits a
+        // touch behind the plane (z -1) so the charm overlaps its lower end.
+        if (REFS.pendantLink) {
+            const top = PARAMS.PENDANT_LINK_OVERLAP;          // start above the bail → grips the chain
+            const bottom = top - PARAMS.PENDANT_LINK_LEN;     // ends near the charm top
+            REFS.pendantLink.scale.set(1, PARAMS.PENDANT_LINK_LEN, 1);
+            REFS.pendantLink.position.set(0, (top + bottom) / 2, -1);
+        }
     }
 
     function setMetal(metal) {
