@@ -32,13 +32,13 @@
         CHAIN_THICK: 1.15,      // chain tube radius (mm). Keep thin for a delicate look.
         CHAIN_SEGMENTS: 320,    // tube length segments (smoothness of the drape)
         CHAIN_RADIAL: 10,       // tube radial segments (roundness)
-        FRONT_DRAPE: 52,        // extra downward sag at the front centre from the chain's weight (mm)
+        FRONT_DRAPE: 62,        // extra downward sag at the front centre from the chain's weight (mm)
         LOOP_SAMPLES: 170,      // points sampled around the neck for the curve
         // The raw neck-side points sit HIGH (near the jaw). These pull the sides + nape DOWN
         // toward the front level so the chain rests on the neck/collar and its two ends tuck
         // in low, instead of shooting up beside the jaw and floating ("giả chân").
-        SIDE_RAISE: 0.62,       // 0 = sides as low as the front (flat), 1 = up at the raw neck-top points
-        BACK_RAISE: 0.72,       // how high the nape rides (it's hidden by the occluder anyway)
+        SIDE_RAISE: 0.8,        // 0 = sides as low as the front (flat), 1 = up at the raw neck-top points
+        BACK_RAISE: 0.74,       // how high the nape rides (it's hidden by the occluder anyway)
 
         PENDANT_SIZE: 46,       // pendant width (mm); height follows the image aspect ratio
         PENDANT_GAP: 4,         // gap between the chain front point and the top of the pendant (mm)
@@ -78,10 +78,10 @@
         SOFT_GRAVITY: 240,      // gentle weight + lean-hang only — LOW so it doesn't move on its own
         SOFT_STIFFNESS: 66,     // firm pull back to the rest shape → holds still / settles fast
         SOFT_NEIGHBOR: 55,      // wave coupling between neighbours → ripples travel along the chain
-        SOFT_DAMPING: 0.84,     // velocity retention 0..1 (LOW → motion dies fast, no constant wobble)
+        SOFT_DAMPING: 0.8,      // velocity retention 0..1 (LOW → motion dies fast, no constant wobble)
         SOFT_PIN_STRENGTH: 10,  // how hard the back/sides are held to the neck (front stays free to ripple)
-        SOFT_MAX_DEV: 26,       // max a node may stray from rest (mm) → room to sag, never detaches
-        SOFT_MOTION_DEADZONE: 0.35, // ignore neck-pose jitter below this (mm/frame) so a still head = a still chain
+        SOFT_MAX_DEV: 18,       // max a node may stray from rest (mm) → keeps the ripple MODERATE, never wild
+        SOFT_MOTION_DEADZONE: 1.1, // only a STRONG move (mm/frame) ripples the chain; small motion/jitter = still
         // Only the FRONT arc swings; the sides + nape stay PINNED to the neck so the chain
         // grips both sides and the back like a real necklace (cos(theta) above this = free).
         // 1=only the very front free, 0=half the loop free. ~0.3 → front ~±72° drapes, rest hugs.
@@ -178,12 +178,13 @@
     const NN_DEFAULT = '9';
 
     function resolveNNKey() {
-        // priority: ?nn=N url param (power testing) → saved choice → default
+        // NN_NECKLACE_9 is the most accurate neck-grip net, so it is the authoritative boot
+        // net. Only an explicit ?nn=N url param overrides it (for power testing); we do NOT
+        // restore a stale saved choice, so a normal load always grips with NN_9.
         try {
             const u = new URLSearchParams(location.search).get('nn');
             if (u && NN_REGISTRY[u]) return u;
-            const s = localStorage.getItem('pnjNeckNN');
-            if (s && NN_REGISTRY[s]) return s;
+            localStorage.removeItem('pnjNeckNN'); // clear any old override so 9 stays default
         } catch (e) { /* storage blocked */ }
         return NN_DEFAULT;
     }
@@ -529,13 +530,12 @@
     function onReady(err, sceneObjects) {
         if (err) {
             // A heavy net (7 MB) can fail to load / OOM on a weak phone. Fall back to the
-            // proven default net ONCE (guarded so we never loop), then surface the error.
+            // proven default net (NN_9) ONCE (guarded so we never loop), then surface the error.
             if (ACTIVE_NN_KEY !== NN_DEFAULT && !sessionStorage.getItem('pnjNNFellBack')) {
-                try {
-                    sessionStorage.setItem('pnjNNFellBack', '1');
-                    localStorage.setItem('pnjNeckNN', NN_DEFAULT);
-                } catch (e) { /* ignore */ }
-                location.reload();
+                try { sessionStorage.setItem('pnjNNFellBack', '1'); } catch (e) { /* ignore */ }
+                const url = new URL(location.href);
+                url.searchParams.delete('nn'); // drop the override → boots back on NN_9
+                location.assign(url.toString());
                 return;
             }
             showError('Tracking engine failed to start: ' + err);
@@ -804,9 +804,10 @@
         const cap = document.getElementById('pnjCapture');
         if (cap) cap.addEventListener('click', captureImage);
 
-        // Precision selector — cycles the AI-model quality ladder so the user can pick
-        // the most accurate net for their device. Persists + reloads (changing the net
-        // re-centres solvePnP, so a clean reload is the robust way to apply it).
+        // Precision selector — cycles the AI-model quality ladder for power testing. It applies
+        // the choice via the ?nn= URL param + reload (changing the net re-centres solvePnP, so a
+        // clean reload is the robust way to apply it). NN_9 is the default; visiting the page
+        // fresh (no ?nn=) always boots on NN_9, the best neck-grip net.
         const prec = document.getElementById('pnjPrecision');
         if (prec) {
             const lbl = prec.querySelector('.pnj-prec__label');
@@ -815,14 +816,15 @@
                 let i = NN_LADDER.indexOf(ACTIVE_NN_KEY);
                 if (i === -1) i = NN_LADDER.indexOf(NN_DEFAULT);
                 const nextKey = NN_LADDER[(i + 1) % NN_LADDER.length];
-                try { localStorage.setItem('pnjNeckNN', nextKey); } catch (e) { /* ignore */ }
                 const boot = document.getElementById('pnjBoot');
                 if (boot) {
                     boot.classList.remove('is-hidden');
                     const t = boot.querySelector('.pnj-boot__text');
                     if (t) t.textContent = 'Đang đổi mô hình AI: ' + NN_REGISTRY[nextKey].label + '…';
                 }
-                setTimeout(function () { location.reload(); }, 120);
+                const url = new URL(location.href);
+                url.searchParams.set('nn', nextKey);
+                setTimeout(function () { location.assign(url.toString()); }, 120);
             });
         }
 
