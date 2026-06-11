@@ -307,38 +307,33 @@
         return t * t * (3 - 2 * t);
     }
 
-    // Depth-based alpha fade injected into the chain's MeshStandardMaterial: chain
-    // vertices toward the BACK (lower local z) fade to invisible, so the two side ends
-    // dissolve into the neck instead of ending in a hard floating tip. Same proven
-    // onBeforeCompile pattern WebAR.rocks uses to fade glasses temples.
-    function applyChainFade(mat, zStart, zEnd, zProtect0, zProtect1) {
+    // Depth-after-yaw alpha fade injected into the chain's MeshStandardMaterial. For each
+    // chain vertex we compute its depth AFTER the live head-yaw rotation:
+    //     facingDepth = z*cos(uYaw) - x*sin(uYaw)
+    // High = toward the camera (front), low = behind the neck. We fade the low (back) part.
+    // • Facing straight (uYaw=0): facingDepth = z, so BOTH side strands are at equal depth →
+    //   symmetric, only the nape fades. (Fixes the "uneven 2 sides facing straight" bug.)
+    // • Turning L/R: the receding side's x term drops its facingDepth → it sinks behind the
+    //   neck and fades; the near side rises and stays. That is the real 3D turn occlusion /
+    //   the "nghiêng khi xoay" depth cue — symmetric by construction, no sign flips.
+    function applyChainFade(mat, fadeFull, fadeGone) {
         mat.transparent = true;
         mat.depthWrite = true; // thin metal still reads solid; faded ends sit behind the occluder
         mat.onBeforeCompile = function (sh) {
-            sh.uniforms.uFadeZ = { value: new THREE.Vector2(zStart, zEnd) };
-            // uYaw = live signed turn-from-neutral (rad); uYawFade = (start,end,maxAlphaRemoved).
-            // uYawProtect = the z range of the FRONT that never yaw-fades (keeps the pendant).
-            sh.uniforms.uYaw = { value: 0 };
-            sh.uniforms.uYawFade = { value: new THREE.Vector3(PARAMS.YAW_HIDE_START, PARAMS.YAW_HIDE_END, PARAMS.YAW_HIDE_MAX) };
-            sh.uniforms.uYawProtect = { value: new THREE.Vector2(zProtect0, zProtect1) };
+            sh.uniforms.uYaw = { value: 0 };                 // live calibrated head-yaw (rad)
+            sh.uniforms.uFade = { value: new THREE.Vector2(fadeFull, fadeGone) }; // (fully visible above, gone below)
             REFS.chainShader = sh; // keep a handle so onTrack can update uYaw every frame
             sh.vertexShader = 'varying float vChainZ;\nvarying float vChainX;\n' + sh.vertexShader.replace(
                 '#include <begin_vertex>',
                 '#include <begin_vertex>\n  vChainZ = position.z;\n  vChainX = position.x;'
             );
             sh.fragmentShader =
-                'uniform vec2 uFadeZ;\nuniform float uYaw;\nuniform vec3 uYawFade;\nuniform vec2 uYawProtect;\nvarying float vChainZ;\nvarying float vChainX;\n' +
+                'uniform float uYaw;\nuniform vec2 uFade;\nvarying float vChainZ;\nvarying float vChainX;\n' +
                 sh.fragmentShader.replace(
                     '#include <dithering_fragment>',
                     '#include <dithering_fragment>\n' +
-                    // 1) back-of-neck fade (the nape ends always dissolve)
-                    '  gl_FragColor.a *= smoothstep(uFadeZ.y, uFadeZ.x, vChainZ);\n' +
-                    // 2) yaw side-hide: only the side whose sign matches the turn (recede>0),
-                    //    only BEHIND the front-protect zone, and capped so it never fully blanks.
-                    '  float recede = uYaw * sign(vChainX);\n' +
-                    '  float byYaw = smoothstep(uYawFade.x, uYawFade.y, recede);\n' +
-                    '  float notFront = 1.0 - smoothstep(uYawProtect.x, uYawProtect.y, vChainZ);\n' +
-                    '  gl_FragColor.a *= 1.0 - uYawFade.z * byYaw * notFront;'
+                    '  float facingDepth = vChainZ * cos(uYaw) - vChainX * sin(uYaw);\n' +
+                    '  gl_FragColor.a *= smoothstep(uFade.y, uFade.x, facingDepth);'
                 );
         };
     }
