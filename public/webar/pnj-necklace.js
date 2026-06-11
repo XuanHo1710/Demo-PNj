@@ -93,10 +93,10 @@
         SOFT_GRAVITY: 240,      // gentle weight + lean-hang only — LOW so it doesn't move on its own
         SOFT_STIFFNESS: 66,     // firm pull back to the rest shape → holds still / settles fast
         SOFT_NEIGHBOR: 55,      // wave coupling between neighbours → ripples travel along the chain
-        SOFT_DAMPING: 0.8,      // velocity retention 0..1 (LOW → motion dies fast, no constant wobble)
+        SOFT_DAMPING: 0.78,     // velocity retention 0..1 (LOW → motion dies fast, no constant wobble)
         SOFT_PIN_STRENGTH: 10,  // how hard the back/sides are held to the neck (front stays free to ripple)
-        SOFT_MAX_DEV: 18,       // max a node may stray from rest (mm) → keeps the ripple MODERATE, never wild
-        SOFT_MOTION_DEADZONE: 1.1, // only a STRONG move (mm/frame) ripples the chain; small motion/jitter = still
+        SOFT_MAX_DEV: 12,       // max a node may stray from rest (mm) → keeps the ripple SUBTLE, never wild
+        SOFT_MOTION_DEADZONE: 2.2, // only a STRONG move (mm/frame) ripples the chain; normal motion = still
         // Only the FRONT arc swings; the sides + nape stay PINNED to the neck so the chain
         // grips both sides and the back like a real necklace (cos(theta) above this = free).
         // 1=only the very front free, 0=half the loop free. ~0.3 → front ~±72° drapes, rest hugs.
@@ -177,19 +177,15 @@
     ];
 
     // `points` → which solvePnP set; `filter` → stabilizer forceFilterNNInputPxRange
-    // tuned per net (demo: NN_9 → [8,16], NN_8 → [4,12]); `label` → precision-button text.
+    // tuned per net; `label` → precision-button text.
+    // NOTE: only NN_NECKLACE_9.json ships in this build (the most accurate neck-grip net,
+    // the official demo default). The other necklace nets were removed, so the registry +
+    // ladder are locked to '9'. A stale ?nn=N for a missing net falls back to '9' (no 404).
     const NN_REGISTRY = {
-        '9': { path: 'neuralNets/NN_NECKLACE_9.json', points: 6, filter: [8, 16], threshold: 0.7, label: 'Cân bằng' },
-        '8': { path: 'neuralNets/NN_NECKLACE_8.json', points: 6, filter: [4, 12], threshold: 0.7, label: 'Sắc nét' },
-        '7': { path: 'neuralNets/NN_NECKLACE_7.json', points: 6, filter: [4, 12], threshold: 0.7, label: 'Sắc nét+' },
-        '6': { path: 'neuralNets/NN_NECKLACE_6.json', points: 6, filter: [6, 14], threshold: 0.7, label: 'Nhẹ' },
-        '4': { path: 'neuralNets/NN_NECKLACE_4.json', points: 8, filter: [6, 14], threshold: 0.7, label: '8 điểm' },
-        '3': { path: 'neuralNets/NN_NECKLACE_3.json', points: 8, filter: [6, 14], threshold: 0.7, label: '8 điểm·3' },
-        '2': { path: 'neuralNets/NN_NECKLACE_2.json', points: 8, filter: [6, 14], threshold: 0.7, label: '8 điểm·2' },
-        '1': { path: 'neuralNets/NN_NECKLACE_1.json', points: 8, filter: [6, 14], threshold: 0.7, label: '8 điểm·1' }
+        '9': { path: 'neuralNets/NN_NECKLACE_9.json', points: 6, filter: [8, 16], threshold: 0.7, label: 'Cân bằng' }
     };
-    // The precision button cycles this curated ladder: Fast → Balanced(default) → 8-point → Sharp.
-    const NN_LADDER = ['6', '9', '4', '8'];
+    // Single net → the ladder has one entry and the precision button is hidden.
+    const NN_LADDER = ['9'];
     const NN_DEFAULT = '9';
 
     function resolveNNKey() {
@@ -819,28 +815,30 @@
         const cap = document.getElementById('pnjCapture');
         if (cap) cap.addEventListener('click', captureImage);
 
-        // Precision selector — cycles the AI-model quality ladder for power testing. It applies
-        // the choice via the ?nn= URL param + reload (changing the net re-centres solvePnP, so a
-        // clean reload is the robust way to apply it). NN_9 is the default; visiting the page
-        // fresh (no ?nn=) always boots on NN_9, the best neck-grip net.
+        // Precision selector — only meaningful with multiple AI nets. This build ships a
+        // single net (NN_9), so hide the button entirely (cycling would 404 on a missing net).
         const prec = document.getElementById('pnjPrecision');
         if (prec) {
-            const lbl = prec.querySelector('.pnj-prec__label');
-            if (lbl) lbl.textContent = NN_REGISTRY[ACTIVE_NN_KEY].label;
-            prec.addEventListener('click', function () {
-                let i = NN_LADDER.indexOf(ACTIVE_NN_KEY);
-                if (i === -1) i = NN_LADDER.indexOf(NN_DEFAULT);
-                const nextKey = NN_LADDER[(i + 1) % NN_LADDER.length];
-                const boot = document.getElementById('pnjBoot');
-                if (boot) {
-                    boot.classList.remove('is-hidden');
-                    const t = boot.querySelector('.pnj-boot__text');
-                    if (t) t.textContent = 'Đang đổi mô hình AI: ' + NN_REGISTRY[nextKey].label + '…';
-                }
-                const url = new URL(location.href);
-                url.searchParams.set('nn', nextKey);
-                setTimeout(function () { location.assign(url.toString()); }, 120);
-            });
+            if (NN_LADDER.length > 1) {
+                const lbl = prec.querySelector('.pnj-prec__label');
+                if (lbl) lbl.textContent = NN_REGISTRY[ACTIVE_NN_KEY].label;
+                prec.addEventListener('click', function () {
+                    let i = NN_LADDER.indexOf(ACTIVE_NN_KEY);
+                    if (i === -1) i = NN_LADDER.indexOf(NN_DEFAULT);
+                    const nextKey = NN_LADDER[(i + 1) % NN_LADDER.length];
+                    const boot = document.getElementById('pnjBoot');
+                    if (boot) {
+                        boot.classList.remove('is-hidden');
+                        const t = boot.querySelector('.pnj-boot__text');
+                        if (t) t.textContent = 'Đang đổi mô hình AI: ' + NN_REGISTRY[nextKey].label + '…';
+                    }
+                    const url = new URL(location.href);
+                    url.searchParams.set('nn', nextKey);
+                    setTimeout(function () { location.assign(url.toString()); }, 120);
+                });
+            } else {
+                prec.style.display = 'none';
+            }
         }
 
         const metal = document.getElementById('pnjMetal');
