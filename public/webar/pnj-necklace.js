@@ -44,7 +44,7 @@
         CHAIN_THICK: 1.15,      // chain tube radius (mm). Keep thin for a delicate look.
         CHAIN_SEGMENTS: 320,    // tube length segments (smoothness of the drape)
         CHAIN_RADIAL: 10,       // tube radial segments (roundness)
-        FRONT_DRAPE: 44,        // extra downward sag at the front centre from the chain's weight (mm)
+        FRONT_DRAPE: 54,        // extra downward sag at the front centre from the chain's weight (mm)
         LOOP_SAMPLES: 170,      // points sampled around the neck for the curve
         // The raw neck-side points sit HIGH (near the jaw). These pull the sides + nape DOWN
         // toward the front level so the chain rests on the neck/collar and its two ends tuck
@@ -56,7 +56,9 @@
         NECK_LIFT: 26,
 
         PENDANT_SIZE: 46,       // pendant width (mm); height follows the image aspect ratio
-        PENDANT_GAP: 4,         // gap between the chain front point and the top of the pendant (mm)
+        PENDANT_GAP: -7,        // bail vs chain front node (mm). NEGATIVE = the pendant top OVERLAPS the
+                                //   chain so the bail looks fused to it (no floating gap). More negative
+                                //   = more overlap / pendant rides higher; positive = a visible gap below.
         PENDANT_FWD: 6,         // push the pendant slightly forward of the chain so it never z-fights (mm)
         PENDANT_TILT: -0.12,    // small forward lean (rad) so the charm faces the camera a touch
 
@@ -102,26 +104,21 @@
         // 1=only the very front free, 0=half the loop free. ~0.3 → front ~±72° drapes, rest hugs.
         SOFT_FRONT_PIN: 0.3,
 
-        // --- End fade — dissolve the two side ends into the neck ------------------
-        // A depth-based alpha fade: chain vertices toward the BACK (lower local z) fade to
-        // invisible, so where the chain curves behind the neck it vanishes smoothly instead
-        // of ending in a hard floating tip ("giả chân"). Works with the depth occluder.
+        // --- Depth-after-yaw fade — the real 3D turn occlusion --------------------
+        // The chain alpha fades by FACING-DEPTH = the vertex depth AFTER rotating it by the
+        // live head-yaw. Facing straight (yaw=0) this is just local z, so only the nape (low z)
+        // fades — symmetric, both sides equal. Turn left/right and the receding side's facing
+        // depth drops below the threshold → it sinks behind the neck and fades, while the near
+        // side stays → you get the "độ nghiêng" 3D turn look, with NO facing-straight asymmetry
+        // (the old per-side sign-hide caused that). Works together with the depth occluder.
         FADE_ENABLED: true,
-        FADE_START_FRAC: 0.74, // begin fading this far back (0 = front, 1 = back) — only the nape fades
-        FADE_END_FRAC: 0.95,    // fully invisible this far back → the very ends disappear into the neck
+        FADE_START_FRAC: 0.55, // begin fading at this facing-depth back (0 = front, 1 = back)
+        FADE_END_FRAC: 0.86,    // fully invisible by this facing-depth → ends dissolve into the neck
 
-        // --- Yaw side-hide — DISABLED ---------------------------------------------
-        // This faded the far strand on a head turn, but it kept making the necklace look
-        // ASYMMETRIC facing straight (any tiny yaw bias fades one side) and ate the neck
-        // wrap. The depth occluder already hides the back symmetrically + correctly in 3D,
-        // which is the realistic look. Left here (off) so it can be re-enabled if ever fixed.
-        YAW_HIDE_ENABLED: false,
-        YAW_HIDE_START: 0.34,   // start hiding the far strand at this turn from neutral (rad, ~19°)
-        YAW_HIDE_END: 0.78,     // far strand fully faded by this turn (rad, ~45°)
-        YAW_HIDE_MAX: 0.92,     // max alpha removed (0..1) — <1 so a faded strand is a faint ghost, never a screen-wide blank
-        YAW_FRONT_PROTECT: 0.4, // front fraction of the loop that NEVER yaw-fades (keeps the pendant + front drape)
+        // Yaw calibration for the depth-after-yaw fade (above). uYaw = head-turn from a slowly
+        // self-calibrating neutral, so a small resting yaw bias never makes facing-straight uneven.
         YAW_REST_ADAPT: 0.03,   // how fast the neutral-yaw baseline self-calibrates (0..1, small = slow)
-        YAW_HIDE_SIGN: 1,       // flip to -1 if the WRONG side hides on turn
+        YAW_HIDE_SIGN: 1,       // flip to -1 if the WRONG side recedes on turn
 
         // Neck occluder — an invisible depth-only cylinder shaped to the neck. It HIDES the
         // chain where it wraps BEHIND the neck, so the two ends tuck behind it instead of
@@ -461,15 +458,13 @@
         });
         if (PARAMS.FADE_ENABLED) {
             const span = (zMax - zMin) || 1;
-            // front-protect zone for the yaw-hide: the front YAW_FRONT_PROTECT of the z span
-            // never fades (keeps the pendant + front drape visible on a head turn).
-            const zp0 = zMax - span * (PARAMS.YAW_FRONT_PROTECT + 0.12);
-            const zp1 = zMax - span * PARAMS.YAW_FRONT_PROTECT;
-            applyChainFade(
-                REFS.chainMat,
-                zMax - span * PARAMS.FADE_START_FRAC, zMax - span * PARAMS.FADE_END_FRAC,
-                zp0, zp1
-            );
+            // Fade thresholds in facing-depth (= local z when facing straight). Visible from
+            // the front down to FADE_START_FRAC back, fully gone by FADE_END_FRAC back. When
+            // you turn, the shader rotates this depth by the live yaw → the receding side
+            // crosses these thresholds and fades behind the neck (the 3D turn occlusion).
+            const fadeFull = zMax - span * PARAMS.FADE_START_FRAC;
+            const fadeGone = zMax - span * PARAMS.FADE_END_FRAC;
+            applyChainFade(REFS.chainMat, fadeFull, fadeGone);
         }
         REFS.chainMesh = new THREE.Mesh(
             new THREE.TubeGeometry(REFS.softCurve, PARAMS.SOFT_TUBE_SEGMENTS, PARAMS.CHAIN_THICK, PARAMS.CHAIN_RADIAL, true),
@@ -752,11 +747,13 @@
         if (dt <= 0) return;
         if (dt > 0.04) dt = 0.04; // clamp → integrators stay stable after a stall / tab switch
 
-        // Yaw side-hide: feed the live turn-FROM-NEUTRAL to the chain shader. The neutral-yaw
-        // baseline self-calibrates (slow EMA) only while the head is fairly steady, so the
-        // resting pose reads as 0 turn → nothing hides when you just face the camera (that
-        // off-rest bias was why it "hid everything"). Only a real turn fades the far strand.
-        if (PARAMS.YAW_HIDE_ENABLED && REFS.chainShader) {
+        // Feed the live head-yaw (turn from the self-calibrated neutral) to the chain shader.
+        // The shader rotates each vertex's depth by this yaw, so the RECEDING side sinks behind
+        // the neck and fades while the near side stays → real 3D turn occlusion, symmetric by
+        // construction (facing straight = 0 → both sides equal → even). The neutral baseline
+        // self-calibrates by a slow EMA only while the head is steady, so a small resting yaw
+        // bias never makes it uneven facing straight.
+        if (REFS.chainShader) {
             const wYawNow = Math.abs(yaw - PHYS.yaw) / dt; // rad/s
             if (wYawNow < 0.6) { // steady-ish → adapt the neutral baseline toward the current yaw
                 PHYS.yawRest += (yaw - PHYS.yawRest) * PARAMS.YAW_REST_ADAPT;
